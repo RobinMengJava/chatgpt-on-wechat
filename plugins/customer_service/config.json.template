@@ -1,0 +1,5 @@
+{
+  "enabled": true,
+  "fallback_text": "抱歉，暂时无法回答您的问题，我会记录下来，然后好好学习。",
+  "unanswered_log_path": "~/cow/unanswered_questions.log"
+}
