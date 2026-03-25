@@ -55,6 +55,19 @@ def _import_optional_tools():
     except Exception as e:
         logger.error(f"[Tools] WebSearch failed to load: {e}")
 
+    # MySQL Query Tool (requires pymysql)
+    try:
+        from agent.tools.mysql.mysql_query import MySQLQuery
+        tools['MySQLQuery'] = MySQLQuery
+    except ImportError as e:
+        logger.error(
+            f"[Tools] MySQLQuery not loaded - missing dependency: {e}\n"
+            f"  To enable MySQL queries, run:\n"
+            f"    pip install pymysql"
+        )
+    except Exception as e:
+        logger.error(f"[Tools] MySQLQuery failed to load: {e}")
+
     # WebFetch Tool
     try:
         from agent.tools.web_fetch.web_fetch import WebFetch
@@ -85,6 +98,7 @@ Vision = _optional_tools.get('Vision')
 GoogleSearch = _optional_tools.get('GoogleSearch')
 FileSave = _optional_tools.get('FileSave')
 Terminal = _optional_tools.get('Terminal')
+MySQLQuery = _optional_tools.get('MySQLQuery')
 
 
 # Delayed import for BrowserTool
@@ -124,6 +138,7 @@ __all__ = [
     'WebSearch',
     'WebFetch',
     'Vision',
+    'MySQLQuery',
     # Optional tools (may be None if dependencies not available)
     # 'BrowserTool'
 ]
