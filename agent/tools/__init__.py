@@ -68,6 +68,23 @@ def _import_optional_tools():
     except Exception as e:
         logger.error(f"[Tools] MySQLQuery failed to load: {e}")
 
+    # Ticket tools (requires requests)
+    try:
+        from agent.tools.ticket.refund_tool import RefundExecuteTool
+        from agent.tools.ticket.cancel_ticket_tool import CancelTicketTool
+        from agent.tools.ticket.restore_ticket_tool import RestoreTicketTool
+        tools['RefundExecuteTool'] = RefundExecuteTool
+        tools['CancelTicketTool'] = CancelTicketTool
+        tools['RestoreTicketTool'] = RestoreTicketTool
+    except ImportError as e:
+        logger.error(
+            f"[Tools] Ticket tools not loaded - missing dependency: {e}\n"
+            f"  To enable ticket operations, run:\n"
+            f"    pip install requests"
+        )
+    except Exception as e:
+        logger.error(f"[Tools] Ticket tools failed to load: {e}")
+
     # WebFetch Tool
     try:
         from agent.tools.web_fetch.web_fetch import WebFetch
@@ -99,6 +116,9 @@ GoogleSearch = _optional_tools.get('GoogleSearch')
 FileSave = _optional_tools.get('FileSave')
 Terminal = _optional_tools.get('Terminal')
 MySQLQuery = _optional_tools.get('MySQLQuery')
+RefundExecuteTool = _optional_tools.get('RefundExecuteTool')
+CancelTicketTool = _optional_tools.get('CancelTicketTool')
+RestoreTicketTool = _optional_tools.get('RestoreTicketTool')
 
 
 # Delayed import for BrowserTool
@@ -139,6 +159,9 @@ __all__ = [
     'WebFetch',
     'Vision',
     'MySQLQuery',
+    'RefundExecuteTool',
+    'CancelTicketTool',
+    'RestoreTicketTool',
     # Optional tools (may be None if dependencies not available)
     # 'BrowserTool'
 ]

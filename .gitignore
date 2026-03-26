@@ -33,7 +33,11 @@ plugins/banwords/lib/__pycache__
 !plugins/keyword
 !plugins/linkai
 !plugins/agent
+!plugins/customer_service
 client_config.json
 ref/
 .cursor/
+.claude/
+node_modules/
+yarn.lock
 local/
