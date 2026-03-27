@@ -73,9 +73,11 @@ def _import_optional_tools():
         from agent.tools.ticket.refund_tool import RefundExecuteTool
         from agent.tools.ticket.cancel_ticket_tool import CancelTicketTool
         from agent.tools.ticket.restore_ticket_tool import RestoreTicketTool
+        from agent.tools.ticket.rebook_tool import RebookExecuteTool
         tools['RefundExecuteTool'] = RefundExecuteTool
         tools['CancelTicketTool'] = CancelTicketTool
         tools['RestoreTicketTool'] = RestoreTicketTool
+        tools['RebookExecuteTool'] = RebookExecuteTool
     except ImportError as e:
         logger.error(
             f"[Tools] Ticket tools not loaded - missing dependency: {e}\n"
@@ -119,6 +121,7 @@ MySQLQuery = _optional_tools.get('MySQLQuery')
 RefundExecuteTool = _optional_tools.get('RefundExecuteTool')
 CancelTicketTool = _optional_tools.get('CancelTicketTool')
 RestoreTicketTool = _optional_tools.get('RestoreTicketTool')
+RebookExecuteTool = _optional_tools.get('RebookExecuteTool')
 
 
 # Delayed import for BrowserTool
@@ -162,6 +165,7 @@ __all__ = [
     'RefundExecuteTool',
     'CancelTicketTool',
     'RestoreTicketTool',
+    'RebookExecuteTool',
     # Optional tools (may be None if dependencies not available)
     # 'BrowserTool'
 ]
