@@ -87,6 +87,19 @@ def _import_optional_tools():
     except Exception as e:
         logger.error(f"[Tools] Ticket tools failed to load: {e}")
 
+    # Reconciliation Tool (requires openpyxl + pymysql)
+    try:
+        from agent.tools.reconciliation.reconciliation_tool import ReconciliationTool
+        tools['ReconciliationTool'] = ReconciliationTool
+    except ImportError as e:
+        logger.error(
+            f"[Tools] ReconciliationTool not loaded - missing dependency: {e}\n"
+            f"  To enable reconciliation, run:\n"
+            f"    pip install openpyxl pymysql"
+        )
+    except Exception as e:
+        logger.error(f"[Tools] ReconciliationTool failed to load: {e}")
+
     # WebFetch Tool
     try:
         from agent.tools.web_fetch.web_fetch import WebFetch
@@ -122,6 +135,7 @@ RefundExecuteTool = _optional_tools.get('RefundExecuteTool')
 CancelTicketTool = _optional_tools.get('CancelTicketTool')
 RestoreTicketTool = _optional_tools.get('RestoreTicketTool')
 RebookExecuteTool = _optional_tools.get('RebookExecuteTool')
+ReconciliationTool = _optional_tools.get('ReconciliationTool')
 
 
 # Delayed import for BrowserTool
@@ -166,6 +180,7 @@ __all__ = [
     'CancelTicketTool',
     'RestoreTicketTool',
     'RebookExecuteTool',
+    'ReconciliationTool',
     # Optional tools (may be None if dependencies not available)
     # 'BrowserTool'
 ]
