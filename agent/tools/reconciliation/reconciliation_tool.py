@@ -2,27 +2,28 @@
 Reconciliation tool for supplier Excel statement verification.
 
 Supports two suppliers:
-- 路禾出行 (supplier_1): Itinerary-level reconciliation
+- 新国线 (supplier_1): Itinerary-level reconciliation
   - Detect:    header contains "供应商账号"
-  - Match key: 订单ID (col 0) → lulu_order.open_order_no
+  - Match key: 订单ID (col 0) → lulu_order_itinerary.open_order_no
   - Compare:   票数 → COUNT(lulu_ticket)
                总金额 → SUM(lulu_order_itinerary.actual_amt)  支持双程单
                退款金额 → SUM(lulu_order_itinerary.refund_amt)
-               订单状态 → lulu_order.state
+               订单状态 → MIN(lulu_order_itinerary.state)
   - Skip:      已取消订单跳过所有金额核对
-  - Finance:   佣金率 8%
+  - Finance:   佣金率 8%；输出有效票数、总金额、佣金、应结款
 
-- 路路出行/车盈网 (supplier_2): Ticket-level reconciliation
+- 车盈网 (supplier_2): Ticket-level reconciliation
   - Detect:    header contains "车盈网条码"
   - Match key: 车盈网条码 (col 36) → lulu_ticket.open_ticket_no
   - Compare:   支付金额 (col 61) → lulu_ticket.pay_amt
                车票状态 (col 17) → lulu_ticket.state
-  - Finance:   佣金率 10%
+  - Finance:   空港票源（售票渠道2含"白云机场"）佣金率 3%；其余 10%
+               按空港/非空港分别输出售票金额、退票金额、有效票金额、有效票数、代售佣金
 """
 
 import json
 import os
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from agent.tools.base_tool import BaseTool, ToolResult
 from common.log import logger
@@ -30,8 +31,8 @@ from config import conf
 
 # ── Supplier detection ───────────────────────────────────────────────────────
 
-_SUPPLIER_1_MARKER = "供应商账号"   # unique column in 路禾出行
-_SUPPLIER_2_MARKER = "车盈网条码"   # unique column in 路路出行/车盈网
+_SUPPLIER_1_MARKER = "供应商账号"   # unique column in 新国线
+_SUPPLIER_2_MARKER = "车盈网条码"   # unique column in 车盈网
 
 # ── Supplier 1 column indices (0-based) ─────────────────────────────────────
 
@@ -42,7 +43,9 @@ S1_COL_TOTAL_AMT  = 14
 S1_COL_REFUND_AMT = 15
 S1_COL_STATUS     = 18
 
-# supplier status → expected lulu_order.state values
+S1_COMMISSION_RATE = 0.08
+
+# supplier status → expected lulu_order_itinerary.state values
 S1_STATUS_MAP: Dict[str, set] = {
     "普通":   {100, 200, 210, 260, 300},
     "已取消": {400, 450, 500},
@@ -50,11 +53,16 @@ S1_STATUS_MAP: Dict[str, set] = {
 
 # ── Supplier 2 column indices (0-based) ─────────────────────────────────────
 
-S2_COL_STATUS  = 17
-S2_COL_PAY_AMT = 61
-S2_COL_BARCODE = 36   # 车盈网条码 → lulu_ticket.open_ticket_no
-S2_COL_ORDER_NO = 27  # 订单号，用于报告展示
-S2_COL_PASSENGER = 32 # 乘车人姓名，用于报告展示
+S2_COL_STATUS    = 17
+S2_COL_PAY_AMT   = 61
+S2_COL_BARCODE   = 36   # 车盈网条码 → lulu_ticket.open_ticket_no
+S2_COL_ORDER_NO  = 27   # 订单号，用于报告展示
+S2_COL_PASSENGER = 32   # 乘车人姓名，用于报告展示
+
+S2_AIRPORT_COL_NAME = "售票渠道2"   # 列名，用于识别空港票源
+S2_AIRPORT_MARKER   = "白云机场"    # 列值含此关键字 → 空港票源
+S2_AIRPORT_RATE     = 0.03
+S2_NORMAL_RATE      = 0.10
 
 # supplier status labels
 S2_VALID_STATUSES  = {"已检", "已售", "混检"}
@@ -78,8 +86,8 @@ class ReconciliationTool(BaseTool):
     name: str = "reconciliation"
     description: str = (
         "对账供应商Excel账单，逐行比对订单状态和金额是否与系统一致。"
-        "支持路禾出行（订单级）和路路出行/车盈网（票级）两种账单格式，自动识别。"
-        "传入文件路径，返回差异明细和汇总统计。"
+        "支持新国线（行程级）和车盈网（票级）两种账单格式，自动识别。"
+        "传入文件路径，返回差异明细、汇总统计和财务汇总。"
     )
     params: dict = {
         "type": "object",
@@ -116,26 +124,34 @@ class ReconciliationTool(BaseTool):
         if _SUPPLIER_1_MARKER in header_set:
             return self._reconcile_supplier1(rows)
         elif _SUPPLIER_2_MARKER in header_set:
-            return self._reconcile_supplier2(rows)
+            return self._reconcile_supplier2(rows, headers)
         else:
             return ToolResult.fail(
-                "无法识别供应商格式，请确认是路禾出行或路路出行/车盈网的账单。"
+                "无法识别供应商格式，请确认是新国线或车盈网的账单。"
             )
 
     # ── Excel reader ─────────────────────────────────────────────────────────
 
     @staticmethod
     def _read_excel(file_path: str) -> Tuple[List[tuple], tuple]:
+        """读取 Excel，自动扫描所有 sheet，返回第一个含供应商标记列头的 sheet 数据。"""
         import openpyxl
+        markers = {_SUPPLIER_1_MARKER, _SUPPLIER_2_MARKER}
         wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
-        ws = wb.active
-        all_rows = list(ws.iter_rows(values_only=True))
-        wb.close()
-        if not all_rows:
-            return [], ()
-        headers = all_rows[0]
-        data_rows = [r for r in all_rows[1:] if any(c is not None for c in r)]
-        return data_rows, headers
+        try:
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                all_rows = list(ws.iter_rows(values_only=True))
+                if not all_rows:
+                    continue
+                header_set = {str(h).strip() for h in all_rows[0] if h}
+                if markers & header_set:  # 找到至少一个供应商标记
+                    headers = all_rows[0]
+                    data_rows = [r for r in all_rows[1:] if any(c is not None for c in r)]
+                    return data_rows, headers
+        finally:
+            wb.close()
+        return [], ()
 
     # ── DB connection ─────────────────────────────────────────────────────────
 
@@ -154,7 +170,7 @@ class ReconciliationTool(BaseTool):
             connect_timeout=10,
         )
 
-    # ── Supplier 1：路禾出行（行程级） ────────────────────────────────────────
+    # ── Supplier 1：新国线（行程级） ──────────────────────────────────────────
 
     def _reconcile_supplier1(self, rows: List[tuple]) -> ToolResult:
         order_ids = [
@@ -165,25 +181,23 @@ class ReconciliationTool(BaseTool):
         if not order_ids:
             return ToolResult.fail("账单中未找到有效的订单ID")
 
-        db_orders = self._query_orders_batch(order_ids)
-        db_ticket_counts = self._query_ticket_counts_batch(order_ids)
-        db_itinerary_amts = self._query_itinerary_amounts_batch(order_ids)  # 行程表汇总金额
+        db_ticket_counts  = self._query_ticket_counts_batch(order_ids)
+        db_itinerary_amts = self._query_itinerary_amounts_batch(order_ids)
 
         issues = []
         not_found = []
         matched = 0
-        total_sales_amount = 0.0  # 累计有效销售金额（不含已取消）
+        total_sales_amount    = 0.0
+        total_valid_ticket_cnt = 0
 
         for row in rows:
             oid = str(row[S1_COL_ORDER_ID]).strip() if row[S1_COL_ORDER_ID] else None
             if not oid:
                 continue
 
-            if oid not in db_orders:
+            if oid not in db_itinerary_amts:
                 not_found.append(oid)
                 continue
-
-            db = db_orders[oid]
 
             # 已取消的订单：相当于不存在，跳过所有金额核对
             supplier_status = str(row[S1_COL_STATUS] or "").strip()
@@ -191,14 +205,16 @@ class ReconciliationTool(BaseTool):
                 matched += 1
                 continue
 
+            itinerary = db_itinerary_amts[oid]
             row_issues = []
 
-            # 累加有效销售金额
+            # 累计有效销售金额和票数
             supplier_amt = float(row[S1_COL_TOTAL_AMT] or 0)
-            total_sales_amount += supplier_amt
+            supplier_cnt = int(row[S1_COL_TICKET_CNT] or 0) + int(row[S1_COL_CHILD_CNT] or 0)
+            total_sales_amount    += supplier_amt
+            total_valid_ticket_cnt += supplier_cnt
 
             # 票数（成人票 + 儿童票）
-            supplier_cnt = int(row[S1_COL_TICKET_CNT] or 0) + int(row[S1_COL_CHILD_CNT] or 0)
             db_cnt = db_ticket_counts.get(oid, 0)
             if supplier_cnt != db_cnt:
                 row_issues.append({
@@ -208,7 +224,7 @@ class ReconciliationTool(BaseTool):
                 })
 
             # 总金额 → SUM(lulu_order_itinerary.actual_amt)（支持双程单）
-            db_itinerary_amt = db_itinerary_amts.get(oid, {}).get("actual_amt", 0.0)
+            db_itinerary_amt = itinerary["actual_amt"]
             if abs(supplier_amt - db_itinerary_amt) > _AMT_TOLERANCE:
                 row_issues.append({
                     "field": "总金额",
@@ -218,7 +234,7 @@ class ReconciliationTool(BaseTool):
 
             # 退款金额 → SUM(lulu_order_itinerary.refund_amt)
             supplier_refund = float(row[S1_COL_REFUND_AMT] or 0)
-            db_refund = db_itinerary_amts.get(oid, {}).get("refund_amt", 0.0)
+            db_refund = itinerary["refund_amt"]
             if abs(supplier_refund - db_refund) > _AMT_TOLERANCE:
                 row_issues.append({
                     "field": "退款金额",
@@ -226,8 +242,8 @@ class ReconciliationTool(BaseTool):
                     "db": db_refund,
                 })
 
-            # 订单状态
-            db_state = int(db["state"] or 0)
+            # 订单状态 → MIN(lulu_order_itinerary.state)
+            db_state = itinerary["state"]
             expected = S1_STATUS_MAP.get(supplier_status)
             if expected is not None and db_state not in expected:
                 row_issues.append({
@@ -241,14 +257,21 @@ class ReconciliationTool(BaseTool):
             else:
                 matched += 1
 
+        commission = round(total_sales_amount * S1_COMMISSION_RATE, 2)
+        financial_summary = {
+            "有效票数": total_valid_ticket_cnt,
+            "总金额": round(total_sales_amount, 2),
+            "佣金比例": f"{int(S1_COMMISSION_RATE * 100)}%",
+            "佣金": commission,
+            "应结款": round(total_sales_amount - commission, 2),
+        }
         return self._build_result(
-            "路禾出行", len(order_ids), matched, issues, not_found,
-            total_sales_amount=total_sales_amount, commission_rate=0.08,
+            "新国线", len(order_ids), matched, issues, not_found, financial_summary,
         )
 
-    # ── Supplier 2：路路出行/车盈网（票级） ───────────────────────────────────
+    # ── Supplier 2：车盈网（票级） ────────────────────────────────────────────
 
-    def _reconcile_supplier2(self, rows: List[tuple]) -> ToolResult:
+    def _reconcile_supplier2(self, rows: List[tuple], headers: tuple) -> ToolResult:
         barcodes = [
             str(r[S2_COL_BARCODE]).strip()
             for r in rows
@@ -257,12 +280,24 @@ class ReconciliationTool(BaseTool):
         if not barcodes:
             return ToolResult.fail("账单中未找到有效的车盈网条码")
 
+        # 找"售票渠道2"列的索引，用于区分空港票源
+        airport_col: Optional[int] = None
+        for idx, h in enumerate(headers):
+            if h and str(h).strip() == S2_AIRPORT_COL_NAME:
+                airport_col = idx
+                break
+
         db_tickets = self._query_tickets_batch(barcodes)
 
         issues = []
         not_found = []
         matched = 0
-        total_sales_amount = 0.0  # 累计销售金额
+
+        # 空港 / 非空港分别统计
+        stats = {
+            "airport":     {"sell": 0.0, "refund": 0.0, "valid_cnt": 0},
+            "non_airport": {"sell": 0.0, "refund": 0.0, "valid_cnt": 0},
+        }
 
         for row in rows:
             bc = str(row[S2_COL_BARCODE]).strip() if row[S2_COL_BARCODE] else None
@@ -313,38 +348,42 @@ class ReconciliationTool(BaseTool):
             else:
                 matched += 1
 
-            total_sales_amount += supplier_amt
+            # 判断是否空港票源
+            is_airport = False
+            if airport_col is not None:
+                channel_val = str(row[airport_col] or "")
+                is_airport = S2_AIRPORT_MARKER in channel_val
+            bucket = stats["airport"] if is_airport else stats["non_airport"]
 
+            if supplier_status in S2_VALID_STATUSES:
+                bucket["sell"]      += supplier_amt
+                bucket["valid_cnt"] += 1
+            elif supplier_status in S2_REFUND_STATUSES:
+                bucket["refund"] += supplier_amt
+
+        def _build_bucket_summary(bucket: dict, rate: float) -> dict:
+            sell      = round(bucket["sell"], 2)
+            refund    = round(bucket["refund"], 2)
+            effective = round(sell - refund, 2)
+            commission = round(effective * rate, 2)
+            return {
+                "售票金额":  sell,
+                "退票金额":  refund,
+                "有效票金额": effective,
+                "有效票数":  bucket["valid_cnt"],
+                "佣金比例":  f"{int(rate * 100)}%",
+                "代售佣金":  commission,
+            }
+
+        financial_summary = {
+            "空港票源":  _build_bucket_summary(stats["airport"],     S2_AIRPORT_RATE),
+            "非空港票源": _build_bucket_summary(stats["non_airport"], S2_NORMAL_RATE),
+        }
         return self._build_result(
-            "路路出行/车盈网", len(barcodes), matched, issues, not_found,
-            total_sales_amount=total_sales_amount, commission_rate=0.10,
+            "车盈网", len(barcodes), matched, issues, not_found, financial_summary,
         )
 
     # ── DB queries ────────────────────────────────────────────────────────────
-
-    def _query_orders_batch(self, order_ids: List[str]) -> Dict[str, dict]:
-        result: Dict[str, dict] = {}
-        conn = None
-        try:
-            conn = self._connect()
-            with conn.cursor() as cur:
-                for i in range(0, len(order_ids), _BATCH):
-                    batch = order_ids[i:i + _BATCH]
-                    ph = ",".join(["%s"] * len(batch))
-                    cur.execute(
-                        f"SELECT open_order_no, actual_amt, refund_amt, state "
-                        f"FROM lulu_order "
-                        f"WHERE open_order_no IN ({ph}) AND del_flag=0",
-                        batch,
-                    )
-                    for row in cur.fetchall():
-                        result[row["open_order_no"]] = row
-        except Exception as e:
-            logger.error(f"[ReconciliationTool] Query orders failed: {e}")
-        finally:
-            if conn:
-                conn.close()
-        return result
 
     def _query_ticket_counts_batch(self, order_ids: List[str]) -> Dict[str, int]:
         result: Dict[str, int] = {}
@@ -372,7 +411,7 @@ class ReconciliationTool(BaseTool):
         return result
 
     def _query_itinerary_amounts_batch(self, order_ids: List[str]) -> Dict[str, dict]:
-        """按 open_order_no 汇总 lulu_order_itinerary 的实际金额和退款金额。"""
+        """按 open_order_no 汇总 lulu_order_itinerary 的实际金额、退款金额和最小状态。"""
         result: Dict[str, dict] = {}
         conn = None
         try:
@@ -384,7 +423,8 @@ class ReconciliationTool(BaseTool):
                     cur.execute(
                         f"SELECT open_order_no, "
                         f"  SUM(actual_amt) AS actual_amt, "
-                        f"  SUM(refund_amt) AS refund_amt "
+                        f"  SUM(refund_amt) AS refund_amt, "
+                        f"  MIN(state)      AS state "
                         f"FROM lulu_order_itinerary "
                         f"WHERE open_order_no IN ({ph}) AND del_flag=0 "
                         f"GROUP BY open_order_no",
@@ -394,6 +434,7 @@ class ReconciliationTool(BaseTool):
                         result[row["open_order_no"]] = {
                             "actual_amt": float(row["actual_amt"] or 0),
                             "refund_amt": float(row["refund_amt"] or 0),
+                            "state":      int(row["state"] or 0),
                         }
         except Exception as e:
             logger.error(f"[ReconciliationTool] Query itinerary amounts failed: {e}")
@@ -435,11 +476,8 @@ class ReconciliationTool(BaseTool):
         matched: int,
         issues: List[dict],
         not_found: List[str],
-        total_sales_amount: float = 0.0,
-        commission_rate: float = 0.0,
+        financial_summary: dict,
     ) -> ToolResult:
-        commission = round(total_sales_amount * commission_rate, 2)
-        payout = round(total_sales_amount - commission, 2)
         result = {
             "supplier": supplier,
             "total": total,
@@ -448,16 +486,10 @@ class ReconciliationTool(BaseTool):
             "not_found_count": len(not_found),
             "issues": issues,
             "not_found": not_found[:50],  # 防止 token 溢出
-            "financial_summary": {
-                "total_sales_amount": round(total_sales_amount, 2),
-                "commission_rate": commission_rate,
-                "commission": commission,
-                "payout": payout,
-            },
+            "financial_summary": financial_summary,
         }
         logger.info(
             f"[ReconciliationTool] {supplier}: total={total}, matched={matched}, "
-            f"issues={len(issues)}, not_found={len(not_found)}, "
-            f"sales={total_sales_amount:.2f}, commission={commission:.2f}, payout={payout:.2f}"
+            f"issues={len(issues)}, not_found={len(not_found)}"
         )
         return ToolResult.success(json.dumps(result, ensure_ascii=False, indent=2))
