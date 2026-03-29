@@ -64,6 +64,12 @@ S2_AIRPORT_MARKER   = "白云机场"    # 列值含此关键字 → 空港票源
 S2_AIRPORT_RATE     = 0.03
 S2_NORMAL_RATE      = 0.10
 
+# 空港票源：供应商状态 → lulu_order_itinerary.state 期望值（和 lulu_order 同枚举）
+S2_AIRPORT_ITINERARY_STATUS_MAP: Dict[str, set] = {
+    "valid":  {100, 200, 210, 260, 300},
+    "refund": {400, 450, 500},
+}
+
 # supplier status labels
 S2_VALID_STATUSES  = {"已检", "已售", "混检"}
 S2_REFUND_STATUSES = {"已退"}
@@ -269,17 +275,9 @@ class ReconciliationTool(BaseTool):
             "新国线", len(order_ids), matched, issues, not_found, financial_summary,
         )
 
-    # ── Supplier 2：车盈网（票级） ────────────────────────────────────────────
+    # ── Supplier 2：车盈网（票级/行程级混合） ────────────────────────────────
 
     def _reconcile_supplier2(self, rows: List[tuple], headers: tuple) -> ToolResult:
-        barcodes = [
-            str(r[S2_COL_BARCODE]).strip()
-            for r in rows
-            if r[S2_COL_BARCODE]
-        ]
-        if not barcodes:
-            return ToolResult.fail("账单中未找到有效的车盈网条码")
-
         # 找"售票渠道2"列的索引，用于区分空港票源
         airport_col: Optional[int] = None
         for idx, h in enumerate(headers):
@@ -287,22 +285,37 @@ class ReconciliationTool(BaseTool):
                 airport_col = idx
                 break
 
-        db_tickets = self._query_tickets_batch(barcodes)
-
-        issues = []
-        not_found = []
-        matched = 0
-
-        # 空港 / 非空港分别统计
-        stats = {
-            "airport":     {"sell": 0.0, "refund": 0.0, "valid_cnt": 0},
-            "non_airport": {"sell": 0.0, "refund": 0.0, "valid_cnt": 0},
-        }
-
+        # 按空港/非空港分流
+        airport_rows: List[tuple] = []
+        normal_rows:  List[tuple] = []
         for row in rows:
+            is_airport = (
+                airport_col is not None
+                and row[airport_col] is not None
+                and S2_AIRPORT_MARKER in str(row[airport_col])
+            )
+            if is_airport:
+                airport_rows.append(row)
+            else:
+                normal_rows.append(row)
+
+        issues:    List[dict] = []
+        not_found: List[str]  = []
+        matched = 0
+        airport_stats = {"sell": 0.0, "refund": 0.0, "valid_cnt": 0}
+        normal_stats  = {"sell": 0.0, "refund": 0.0, "valid_cnt": 0}
+
+        # ── 非空港：逐票对比 lulu_ticket ──────────────────────────────────────
+        barcodes = [str(r[S2_COL_BARCODE]).strip() for r in normal_rows if r[S2_COL_BARCODE]]
+        db_tickets = self._query_tickets_batch(barcodes) if barcodes else {}
+
+        for row in normal_rows:
             bc = str(row[S2_COL_BARCODE]).strip() if row[S2_COL_BARCODE] else None
             if not bc:
                 continue
+
+            supplier_status = str(row[S2_COL_STATUS] or "").strip()
+            supplier_amt    = float(row[S2_COL_PAY_AMT] or 0)
 
             if bc not in db_tickets:
                 not_found.append(bc)
@@ -311,76 +324,126 @@ class ReconciliationTool(BaseTool):
             db = db_tickets[bc]
             row_issues = []
 
-            # 支付金额 → pay_amt
-            supplier_amt = float(row[S2_COL_PAY_AMT] or 0)
             db_amt = float(db["pay_amt"] or 0)
             if abs(supplier_amt - db_amt) > _AMT_TOLERANCE:
-                row_issues.append({
-                    "field": "支付金额",
-                    "supplier": supplier_amt,
-                    "db": db_amt,
-                })
+                row_issues.append({"field": "支付金额", "supplier": supplier_amt, "db": db_amt})
 
-            # 车票状态 → lulu_ticket.state
-            supplier_status = str(row[S2_COL_STATUS] or "").strip()
             db_state = int(db["state"] or 0)
             if supplier_status in S2_VALID_STATUSES:
                 expected = S2_STATUS_MAP["valid"]
             elif supplier_status in S2_REFUND_STATUSES:
                 expected = S2_STATUS_MAP["refund"]
             else:
-                expected = None  # 未知状态跳过
-
+                expected = None
             if expected is not None and db_state not in expected:
-                row_issues.append({
-                    "field": "车票状态",
-                    "supplier": supplier_status,
-                    "db": db_state,
-                })
+                row_issues.append({"field": "车票状态", "supplier": supplier_status, "db": db_state})
 
             if row_issues:
                 issues.append({
-                    "order_no": str(row[S2_COL_ORDER_NO] or bc),
-                    "barcode": bc,
+                    "order_no":  str(row[S2_COL_ORDER_NO] or bc),
+                    "barcode":   bc,
                     "passenger": str(row[S2_COL_PASSENGER] or ""),
-                    "issues": row_issues,
+                    "issues":    row_issues,
                 })
             else:
                 matched += 1
 
-            # 判断是否空港票源
-            is_airport = False
-            if airport_col is not None:
-                channel_val = str(row[airport_col] or "")
-                is_airport = S2_AIRPORT_MARKER in channel_val
-            bucket = stats["airport"] if is_airport else stats["non_airport"]
-
             if supplier_status in S2_VALID_STATUSES:
-                bucket["sell"]      += supplier_amt
-                bucket["valid_cnt"] += 1
+                normal_stats["sell"]      += supplier_amt
+                normal_stats["valid_cnt"] += 1
             elif supplier_status in S2_REFUND_STATUSES:
-                bucket["refund"] += supplier_amt
+                normal_stats["refund"] += supplier_amt
 
-        def _build_bucket_summary(bucket: dict, rate: float) -> dict:
-            sell      = round(bucket["sell"], 2)
-            refund    = round(bucket["refund"], 2)
-            effective = round(sell - refund, 2)
+        # ── 空港：按订单号分组，对比 lulu_order_itinerary ─────────────────────
+        # 先按 order_no 分组
+        airport_order_rows: Dict[str, List[tuple]] = {}
+        for row in airport_rows:
+            order_no = str(row[S2_COL_ORDER_NO] or "").strip()
+            if not order_no:
+                continue
+            airport_order_rows.setdefault(order_no, []).append(row)
+
+        db_itineraries = (
+            self._query_itinerary_amounts_batch(list(airport_order_rows.keys()))
+            if airport_order_rows else {}
+        )
+
+        for order_no, order_rows in airport_order_rows.items():
+            valid_rows  = [r for r in order_rows if str(r[S2_COL_STATUS] or "").strip() in S2_VALID_STATUSES]
+            refund_rows = [r for r in order_rows if str(r[S2_COL_STATUS] or "").strip() in S2_REFUND_STATUSES]
+            valid_amt   = sum(float(r[S2_COL_PAY_AMT] or 0) for r in valid_rows)
+            refund_amt  = sum(float(r[S2_COL_PAY_AMT] or 0) for r in refund_rows)
+
+            if order_no not in db_itineraries:
+                not_found.append(order_no)
+                continue
+
+            itinerary  = db_itineraries[order_no]
+            row_issues = []
+
+            # 有效票金额合计 vs lulu_order_itinerary.actual_amt
+            db_actual_amt = itinerary["actual_amt"]
+            if abs(valid_amt - db_actual_amt) > _AMT_TOLERANCE:
+                row_issues.append({
+                    "field":    "支付金额",
+                    "supplier": valid_amt,
+                    "db":       db_actual_amt,
+                })
+
+            # 状态：有效票为主，全退则看退款状态
+            if valid_rows:
+                rep_status = str(valid_rows[0][S2_COL_STATUS] or "").strip()
+                expected_states = S2_AIRPORT_ITINERARY_STATUS_MAP["valid"]
+            elif refund_rows:
+                rep_status = str(refund_rows[0][S2_COL_STATUS] or "").strip()
+                expected_states = S2_AIRPORT_ITINERARY_STATUS_MAP["refund"]
+            else:
+                rep_status, expected_states = "", None
+
+            db_state = itinerary["state"]
+            if expected_states is not None and db_state not in expected_states:
+                row_issues.append({
+                    "field":    "行程状态",
+                    "supplier": rep_status,
+                    "db":       db_state,
+                })
+
+            if row_issues:
+                issues.append({
+                    "order_no":     order_no,
+                    "ticket_count": len(order_rows),
+                    "issues":       row_issues,
+                })
+            else:
+                matched += len(order_rows)
+
+            airport_stats["sell"]      += valid_amt
+            airport_stats["refund"]    += refund_amt
+            airport_stats["valid_cnt"] += len(valid_rows)
+
+        # ── 财务汇总 ──────────────────────────────────────────────────────────
+        def _bucket_summary(bucket: dict, rate: float) -> dict:
+            sell       = round(bucket["sell"], 2)
+            refund     = round(bucket["refund"], 2)
+            effective  = round(sell - refund, 2)
             commission = round(effective * rate, 2)
             return {
-                "售票金额":  sell,
-                "退票金额":  refund,
-                "有效票金额": effective,
-                "有效票数":  bucket["valid_cnt"],
-                "佣金比例":  f"{int(rate * 100)}%",
-                "代售佣金":  commission,
+                "售票金额":   sell,
+                "退票金额":   refund,
+                "有效票金额":  effective,
+                "有效票数":   bucket["valid_cnt"],
+                "佣金比例":   f"{int(rate * 100)}%",
+                "代售佣金":   commission,
             }
 
         financial_summary = {
-            "空港票源":  _build_bucket_summary(stats["airport"],     S2_AIRPORT_RATE),
-            "非空港票源": _build_bucket_summary(stats["non_airport"], S2_NORMAL_RATE),
+            "空港票源":   _bucket_summary(airport_stats, S2_AIRPORT_RATE),
+            "非空港票源":  _bucket_summary(normal_stats,  S2_NORMAL_RATE),
         }
+
+        total = len(barcodes) + sum(len(v) for v in airport_order_rows.values())
         return self._build_result(
-            "车盈网", len(barcodes), matched, issues, not_found, financial_summary,
+            "车盈网", total, matched, issues, not_found, financial_summary,
         )
 
     # ── DB queries ────────────────────────────────────────────────────────────
