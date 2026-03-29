@@ -59,8 +59,9 @@ S2_COL_BARCODE   = 36   # 车盈网条码 → lulu_ticket.open_ticket_no
 S2_COL_ORDER_NO  = 27   # 订单号，用于报告展示
 S2_COL_PASSENGER = 32   # 乘车人姓名，用于报告展示
 
-S2_AIRPORT_COL_NAME  = "售票渠道2"   # 列名，用于识别空港票源
-S2_STATION_BC_COL_NAME = "车站条码" # 列名，车盈网条码找不到时的备用查询键
+S2_AIRPORT_COL_NAME    = "售票渠道2"  # 列名，用于识别空港票源
+S2_STATION_BC_COL_NAME = "车站条码"  # 列名，车盈网条码找不到时的备用查询键
+S2_REVENUE_COL_NAME    = "营收金额(含优惠)"  # 列名，有效票=支付金额，已退票=退款手续费
 S2_AIRPORT_MARKER   = "白云机场"    # 列值含此关键字 → 空港票源
 S2_AIRPORT_RATE     = 0.03
 S2_NORMAL_RATE      = 0.10
@@ -282,12 +283,15 @@ class ReconciliationTool(BaseTool):
         # 找"售票渠道2"和"车站条码"列的索引
         airport_col:    Optional[int] = None
         station_bc_col: Optional[int] = None
+        revenue_col:    Optional[int] = None
         for idx, h in enumerate(headers):
             hs = str(h).strip() if h else ""
             if hs == S2_AIRPORT_COL_NAME:
                 airport_col = idx
             elif hs == S2_STATION_BC_COL_NAME:
                 station_bc_col = idx
+            elif hs == S2_REVENUE_COL_NAME:
+                revenue_col = idx
 
         # 按空港/非空港分流
         airport_rows: List[tuple] = []
@@ -306,8 +310,8 @@ class ReconciliationTool(BaseTool):
         issues:    List[dict] = []
         not_found: List[str]  = []
         matched = 0
-        airport_stats = {"sell": 0.0, "refund": 0.0, "valid_cnt": 0}
-        normal_stats  = {"sell": 0.0, "refund": 0.0, "valid_cnt": 0}
+        airport_stats = {"sell": 0.0, "refund": 0.0, "valid_cnt": 0, "revenue": 0.0}
+        normal_stats  = {"sell": 0.0, "refund": 0.0, "valid_cnt": 0, "revenue": 0.0}
 
         # ── 非空港：逐票对比 lulu_ticket ──────────────────────────────────────
         # 批量预查询：车盈网条码 + 车站条码（都映射到 open_ticket_no）
@@ -341,11 +345,15 @@ class ReconciliationTool(BaseTool):
 
             row_issues = []
 
-            db_amt = float(db["pay_amt"] or 0)
-            if abs(supplier_amt - db_amt) > _AMT_TOLERANCE:
-                row_issues.append({"field": "支付金额", "supplier": supplier_amt, "db": db_amt})
-
             db_state = int(db["state"] or 0)
+            if db_state in S2_STATUS_MAP["refund"]:
+                db_amt = float(db["refund_fee_amt"] or 0)
+            else:
+                db_amt = float(db["pay_amt"] or 0)
+            supplier_revenue = float(row[revenue_col] or 0) if revenue_col is not None else supplier_amt
+            if abs(supplier_revenue - db_amt) > _AMT_TOLERANCE:
+                row_issues.append({"field": "营收金额", "supplier": supplier_revenue, "db": db_amt})
+
             if supplier_status in S2_VALID_STATUSES:
                 expected = S2_STATUS_MAP["valid"]
             elif supplier_status in S2_REFUND_STATUSES:
@@ -365,6 +373,8 @@ class ReconciliationTool(BaseTool):
             else:
                 matched += 1
 
+            revenue_amt = float(row[revenue_col] or 0) if revenue_col is not None else supplier_amt
+            normal_stats["revenue"] += revenue_amt
             if supplier_status in S2_VALID_STATUSES:
                 normal_stats["sell"]      += supplier_amt
                 normal_stats["valid_cnt"] += 1
@@ -398,13 +408,22 @@ class ReconciliationTool(BaseTool):
             itinerary  = db_itineraries[order_no]
             row_issues = []
 
-            # 有效票金额合计 vs lulu_order_itinerary.actual_amt
-            db_actual_amt = itinerary["actual_amt"]
-            if abs(valid_amt - db_actual_amt) > _AMT_TOLERANCE:
+            # 营收金额合计 vs 系统侧有效金额（已退票取 refund_fee_amt，否则取 actual_amt）
+            db_state = itinerary["state"]
+            if db_state in S2_AIRPORT_ITINERARY_STATUS_MAP["refund"]:
+                db_effective_amt = itinerary["refund_fee_amt"]
+            else:
+                db_effective_amt = itinerary["actual_amt"]
+            supplier_revenue_amt = (
+                sum(float(r[revenue_col] or 0) for r in order_rows)
+                if revenue_col is not None
+                else valid_amt
+            )
+            if abs(supplier_revenue_amt - db_effective_amt) > _AMT_TOLERANCE:
                 row_issues.append({
-                    "field":    "支付金额",
-                    "supplier": valid_amt,
-                    "db":       db_actual_amt,
+                    "field":    "营收金额",
+                    "supplier": supplier_revenue_amt,
+                    "db":       db_effective_amt,
                 })
 
             # 状态：有效票为主，全退则看退款状态
@@ -417,7 +436,6 @@ class ReconciliationTool(BaseTool):
             else:
                 rep_status, expected_states = "", None
 
-            db_state = itinerary["state"]
             if expected_states is not None and db_state not in expected_states:
                 row_issues.append({
                     "field":    "行程状态",
@@ -434,15 +452,20 @@ class ReconciliationTool(BaseTool):
             else:
                 matched += len(order_rows)
 
+            revenue_amt = (
+                sum(float(r[revenue_col] or 0) for r in order_rows)
+                if revenue_col is not None
+                else valid_amt - refund_amt
+            )
+            airport_stats["revenue"]   += revenue_amt
             airport_stats["sell"]      += valid_amt
             airport_stats["refund"]    += refund_amt
             airport_stats["valid_cnt"] += len(valid_rows)
 
         # ── 财务汇总 ──────────────────────────────────────────────────────────
         def _bucket_summary(bucket: dict, rate: float) -> dict:
-            sell       = round(bucket["sell"], 2)
             refund     = round(bucket["refund"], 2)
-            effective  = round(sell - refund, 2)
+            effective  = round(bucket["revenue"], 2)
             commission = round(effective * rate, 2)
             return {
                 "有效票金额":  effective,
@@ -501,9 +524,10 @@ class ReconciliationTool(BaseTool):
                     ph = ",".join(["%s"] * len(batch))
                     cur.execute(
                         f"SELECT open_order_no, "
-                        f"  SUM(actual_amt) AS actual_amt, "
-                        f"  SUM(refund_amt) AS refund_amt, "
-                        f"  MIN(state)      AS state "
+                        f"  SUM(actual_amt)     AS actual_amt, "
+                        f"  SUM(refund_amt)     AS refund_amt, "
+                        f"  SUM(refund_fee_amt) AS refund_fee_amt, "
+                        f"  MIN(state)          AS state "
                         f"FROM lulu_order_itinerary "
                         f"WHERE open_order_no IN ({ph}) AND del_flag=0 "
                         f"GROUP BY open_order_no",
@@ -511,9 +535,10 @@ class ReconciliationTool(BaseTool):
                     )
                     for row in cur.fetchall():
                         result[row["open_order_no"]] = {
-                            "actual_amt": float(row["actual_amt"] or 0),
-                            "refund_amt": float(row["refund_amt"] or 0),
-                            "state":      int(row["state"] or 0),
+                            "actual_amt":     float(row["actual_amt"] or 0),
+                            "refund_amt":     float(row["refund_amt"] or 0),
+                            "refund_fee_amt": float(row["refund_fee_amt"] or 0),
+                            "state":          int(row["state"] or 0),
                         }
         except Exception as e:
             logger.error(f"[ReconciliationTool] Query itinerary amounts failed: {e}")
@@ -532,7 +557,7 @@ class ReconciliationTool(BaseTool):
                     batch = barcodes[i:i + _BATCH]
                     ph = ",".join(["%s"] * len(batch))
                     cur.execute(
-                        f"SELECT open_ticket_no, pay_amt, state "
+                        f"SELECT open_ticket_no, pay_amt, refund_fee_amt, state "
                         f"FROM lulu_ticket "
                         f"WHERE open_ticket_no IN ({ph}) AND del_flag=0",
                         batch,
