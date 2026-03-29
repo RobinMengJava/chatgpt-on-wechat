@@ -62,6 +62,7 @@ S2_COL_PASSENGER = 32   # 乘车人姓名，用于报告展示
 S2_AIRPORT_COL_NAME    = "售票渠道2"  # 列名，用于识别空港票源
 S2_STATION_BC_COL_NAME = "车站条码"  # 列名，车盈网条码找不到时的备用查询键
 S2_REVENUE_COL_NAME    = "营收金额(含优惠)"  # 列名，有效票=支付金额，已退票=退款手续费
+S2_REFUND_AMT_COL_NAME = "退票金额"          # 列名，退款金额，用于财务汇总退票金额
 S2_AIRPORT_MARKER   = "白云机场"    # 列值含此关键字 → 空港票源
 S2_AIRPORT_RATE     = 0.03
 S2_NORMAL_RATE      = 0.10
@@ -281,9 +282,10 @@ class ReconciliationTool(BaseTool):
 
     def _reconcile_supplier2(self, rows: List[tuple], headers: tuple) -> ToolResult:
         # 找"售票渠道2"和"车站条码"列的索引
-        airport_col:    Optional[int] = None
-        station_bc_col: Optional[int] = None
-        revenue_col:    Optional[int] = None
+        airport_col:     Optional[int] = None
+        station_bc_col:  Optional[int] = None
+        revenue_col:     Optional[int] = None
+        refund_amt_col:  Optional[int] = None
         for idx, h in enumerate(headers):
             hs = str(h).strip() if h else ""
             if hs == S2_AIRPORT_COL_NAME:
@@ -292,6 +294,8 @@ class ReconciliationTool(BaseTool):
                 station_bc_col = idx
             elif hs == S2_REVENUE_COL_NAME:
                 revenue_col = idx
+            elif hs == S2_REFUND_AMT_COL_NAME:
+                refund_amt_col = idx
 
         # 按空港/非空港分流
         airport_rows: List[tuple] = []
@@ -379,7 +383,8 @@ class ReconciliationTool(BaseTool):
                 normal_stats["sell"]      += supplier_amt
                 normal_stats["valid_cnt"] += 1
             elif supplier_status in S2_REFUND_STATUSES:
-                normal_stats["refund"] += supplier_amt
+                refund_amt_val = float(row[refund_amt_col] or 0) if refund_amt_col is not None else supplier_amt
+                normal_stats["refund"] += refund_amt_val
 
         # ── 空港：按订单号分组，对比 lulu_order_itinerary ─────────────────────
         # 先按 order_no 分组
@@ -399,7 +404,11 @@ class ReconciliationTool(BaseTool):
             valid_rows  = [r for r in order_rows if str(r[S2_COL_STATUS] or "").strip() in S2_VALID_STATUSES]
             refund_rows = [r for r in order_rows if str(r[S2_COL_STATUS] or "").strip() in S2_REFUND_STATUSES]
             valid_amt   = sum(float(r[S2_COL_PAY_AMT] or 0) for r in valid_rows)
-            refund_amt  = sum(float(r[S2_COL_PAY_AMT] or 0) for r in refund_rows)
+            refund_amt  = (
+                sum(float(r[refund_amt_col] or 0) for r in refund_rows)
+                if refund_amt_col is not None
+                else sum(float(r[S2_COL_PAY_AMT] or 0) for r in refund_rows)
+            )
 
             if order_no not in db_itineraries:
                 not_found.append(order_no)
