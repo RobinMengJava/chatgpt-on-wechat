@@ -446,9 +446,8 @@ class ReconciliationTool(BaseTool):
             effective  = round(sell - refund, 2)
             commission = round(effective * rate, 2)
             return {
-                "售票金额":   sell,
-                "退票金额":   refund,
                 "有效票金额":  effective,
+                "退票金额":   refund,
                 "有效票数":   bucket["valid_cnt"],
                 "佣金比例":   f"{int(rate * 100)}%",
                 "代售佣金":   commission,
