@@ -34,14 +34,14 @@ from config import conf
 _SUPPLIER_1_MARKER = "供应商账号"   # unique column in 新国线
 _SUPPLIER_2_MARKER = "车盈网条码"   # unique column in 车盈网
 
-# ── Supplier 1 column indices (0-based) ─────────────────────────────────────
+# ── Supplier 1 column names ──────────────────────────────────────────────────
 
-S1_COL_ORDER_ID   = 0
-S1_COL_TICKET_CNT = 5
-S1_COL_CHILD_CNT  = 6   # 儿童票数，计入总票数
-S1_COL_TOTAL_AMT  = 14
-S1_COL_REFUND_AMT = 15
-S1_COL_STATUS     = 18
+S1_COL_ORDER_ID   = "订单ID"
+S1_COL_TICKET_CNT = "票数"
+S1_COL_CHILD_CNT  = "儿童票"
+S1_COL_TOTAL_AMT  = "总金额"
+S1_COL_REFUND_AMT = "退款金额"
+S1_COL_STATUS     = "订单状态"
 
 S1_COMMISSION_RATE = 0.08
 
@@ -51,18 +51,18 @@ S1_STATUS_MAP: Dict[str, set] = {
     "已取消": {400, 450, 500},
 }
 
-# ── Supplier 2 column indices (0-based) ─────────────────────────────────────
+# ── Supplier 2 column names ──────────────────────────────────────────────────
 
-S2_COL_STATUS    = 17
-S2_COL_PAY_AMT   = 61
-S2_COL_BARCODE   = 36   # 车盈网条码 → lulu_ticket.open_ticket_no
-S2_COL_ORDER_NO  = 27   # 订单号，用于报告展示
-S2_COL_PASSENGER = 32   # 乘车人姓名，用于报告展示
+S2_COL_STATUS    = "车票状态"
+S2_COL_PAY_AMT   = "支付金额"
+S2_COL_BARCODE   = "车盈网条码"
+S2_COL_ORDER_NO  = "订单号"
+S2_COL_PASSENGER = "乘车人姓名"
 
-S2_AIRPORT_COL_NAME    = "售票渠道2"  # 列名，用于识别空港票源
-S2_STATION_BC_COL_NAME = "车站条码"  # 列名，车盈网条码找不到时的备用查询键
+S2_AIRPORT_COL_NAME    = "售票渠道2"        # 列名，用于识别空港票源
+S2_STATION_BC_COL_NAME = "车站条码"         # 列名，车盈网条码找不到时的备用查询键
 S2_REVENUE_COL_NAME    = "营收金额(含优惠)"  # 列名，有效票=支付金额，已退票=退款手续费
-S2_REFUND_AMT_COL_NAME = "退票金额"          # 列名，退款金额，用于财务汇总退票金额
+S2_REFUND_AMT_COL_NAME = "退票金额"         # 列名，退款金额，用于财务汇总退票金额
 S2_AIRPORT_MARKER   = "白云机场"    # 列值含此关键字 → 空港票源
 S2_AIRPORT_RATE     = 0.03
 S2_NORMAL_RATE      = 0.10
@@ -131,7 +131,7 @@ class ReconciliationTool(BaseTool):
 
         header_set = {str(h).strip() for h in headers if h}
         if _SUPPLIER_1_MARKER in header_set:
-            return self._reconcile_supplier1(rows)
+            return self._reconcile_supplier1(rows, headers)
         elif _SUPPLIER_2_MARKER in header_set:
             return self._reconcile_supplier2(rows, headers)
         else:
@@ -162,6 +162,27 @@ class ReconciliationTool(BaseTool):
             wb.close()
         return [], ()
 
+    # ── Column helpers ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _find_col(headers: tuple, name: str) -> Optional[int]:
+        """按列名在 header 行里查找列索引，找不到返回 None。"""
+        for i, h in enumerate(headers):
+            if h and str(h).strip() == name:
+                return i
+        return None
+
+    @staticmethod
+    def _find_cols(headers: tuple, *names: str) -> Dict[str, Optional[int]]:
+        """批量按列名查找索引，返回 {列名: 索引} 字典。"""
+        index_map: Dict[str, Optional[int]] = {n: None for n in names}
+        for i, h in enumerate(headers):
+            if h:
+                hs = str(h).strip()
+                if hs in index_map:
+                    index_map[hs] = i
+        return index_map
+
     # ── DB connection ─────────────────────────────────────────────────────────
 
     @staticmethod
@@ -181,11 +202,27 @@ class ReconciliationTool(BaseTool):
 
     # ── Supplier 1：新国线（行程级） ──────────────────────────────────────────
 
-    def _reconcile_supplier1(self, rows: List[tuple]) -> ToolResult:
+    def _reconcile_supplier1(self, rows: List[tuple], headers: tuple) -> ToolResult:
+        cols = self._find_cols(
+            headers,
+            S1_COL_ORDER_ID, S1_COL_TICKET_CNT, S1_COL_CHILD_CNT,
+            S1_COL_TOTAL_AMT, S1_COL_REFUND_AMT, S1_COL_STATUS,
+        )
+        missing = [n for n, i in cols.items() if i is None]
+        if missing:
+            return ToolResult.fail(f"新国线账单缺少必要列：{', '.join(missing)}")
+
+        c_order_id   = cols[S1_COL_ORDER_ID]
+        c_ticket_cnt = cols[S1_COL_TICKET_CNT]
+        c_child_cnt  = cols[S1_COL_CHILD_CNT]
+        c_total_amt  = cols[S1_COL_TOTAL_AMT]
+        c_refund_amt = cols[S1_COL_REFUND_AMT]
+        c_status     = cols[S1_COL_STATUS]
+
         order_ids = [
-            str(r[S1_COL_ORDER_ID]).strip()
+            str(r[c_order_id]).strip()
             for r in rows
-            if r[S1_COL_ORDER_ID]
+            if r[c_order_id]
         ]
         if not order_ids:
             return ToolResult.fail("账单中未找到有效的订单ID")
@@ -200,7 +237,7 @@ class ReconciliationTool(BaseTool):
         total_valid_ticket_cnt = 0
 
         for row in rows:
-            oid = str(row[S1_COL_ORDER_ID]).strip() if row[S1_COL_ORDER_ID] else None
+            oid = str(row[c_order_id]).strip() if row[c_order_id] else None
             if not oid:
                 continue
 
@@ -209,7 +246,7 @@ class ReconciliationTool(BaseTool):
                 continue
 
             # 已取消的订单：相当于不存在，跳过所有金额核对
-            supplier_status = str(row[S1_COL_STATUS] or "").strip()
+            supplier_status = str(row[c_status] or "").strip()
             if supplier_status == "已取消":
                 matched += 1
                 continue
@@ -218,8 +255,8 @@ class ReconciliationTool(BaseTool):
             row_issues = []
 
             # 累计有效销售金额和票数
-            supplier_amt = float(row[S1_COL_TOTAL_AMT] or 0)
-            supplier_cnt = int(row[S1_COL_TICKET_CNT] or 0) + int(row[S1_COL_CHILD_CNT] or 0)
+            supplier_amt = float(row[c_total_amt] or 0)
+            supplier_cnt = int(row[c_ticket_cnt] or 0) + int(row[c_child_cnt] or 0)
             total_sales_amount    += supplier_amt
             total_valid_ticket_cnt += supplier_cnt
 
@@ -242,7 +279,7 @@ class ReconciliationTool(BaseTool):
                 })
 
             # 退款金额 → SUM(lulu_order_itinerary.refund_amt)
-            supplier_refund = float(row[S1_COL_REFUND_AMT] or 0)
+            supplier_refund = float(row[c_refund_amt] or 0)
             db_refund = itinerary["refund_amt"]
             if abs(supplier_refund - db_refund) > _AMT_TOLERANCE:
                 row_issues.append({
@@ -281,21 +318,29 @@ class ReconciliationTool(BaseTool):
     # ── Supplier 2：车盈网（票级/行程级混合） ────────────────────────────────
 
     def _reconcile_supplier2(self, rows: List[tuple], headers: tuple) -> ToolResult:
-        # 找"售票渠道2"和"车站条码"列的索引
-        airport_col:     Optional[int] = None
-        station_bc_col:  Optional[int] = None
-        revenue_col:     Optional[int] = None
-        refund_amt_col:  Optional[int] = None
-        for idx, h in enumerate(headers):
-            hs = str(h).strip() if h else ""
-            if hs == S2_AIRPORT_COL_NAME:
-                airport_col = idx
-            elif hs == S2_STATION_BC_COL_NAME:
-                station_bc_col = idx
-            elif hs == S2_REVENUE_COL_NAME:
-                revenue_col = idx
-            elif hs == S2_REFUND_AMT_COL_NAME:
-                refund_amt_col = idx
+        # 动态查找所有列索引
+        cols = self._find_cols(
+            headers,
+            S2_COL_STATUS, S2_COL_PAY_AMT, S2_COL_BARCODE,
+            S2_COL_ORDER_NO, S2_COL_PASSENGER,
+            S2_AIRPORT_COL_NAME, S2_STATION_BC_COL_NAME,
+            S2_REVENUE_COL_NAME, S2_REFUND_AMT_COL_NAME,
+        )
+        # 必要列校验（条码列是 supplier 2 的识别标志，必须存在）
+        required = [S2_COL_STATUS, S2_COL_PAY_AMT, S2_COL_BARCODE, S2_COL_ORDER_NO]
+        missing = [n for n in required if cols[n] is None]
+        if missing:
+            return ToolResult.fail(f"车盈网账单缺少必要列：{', '.join(missing)}")
+
+        c_status      = cols[S2_COL_STATUS]
+        c_pay_amt     = cols[S2_COL_PAY_AMT]
+        c_barcode     = cols[S2_COL_BARCODE]
+        c_order_no    = cols[S2_COL_ORDER_NO]
+        c_passenger   = cols[S2_COL_PASSENGER]
+        airport_col   = cols[S2_AIRPORT_COL_NAME]
+        station_bc_col = cols[S2_STATION_BC_COL_NAME]
+        revenue_col   = cols[S2_REVENUE_COL_NAME]
+        refund_amt_col = cols[S2_REFUND_AMT_COL_NAME]
 
         # 按空港/非空港分流
         airport_rows: List[tuple] = []
@@ -319,7 +364,7 @@ class ReconciliationTool(BaseTool):
 
         # ── 非空港：逐票对比 lulu_ticket ──────────────────────────────────────
         # 批量预查询：车盈网条码 + 车站条码（都映射到 open_ticket_no）
-        barcodes = [str(r[S2_COL_BARCODE]).strip() for r in normal_rows if r[S2_COL_BARCODE]]
+        barcodes = [str(r[c_barcode]).strip() for r in normal_rows if r[c_barcode]]
         station_barcodes = (
             [str(r[station_bc_col]).strip() for r in normal_rows
              if station_bc_col is not None and r[station_bc_col] and str(r[station_bc_col]).strip()]
@@ -329,12 +374,12 @@ class ReconciliationTool(BaseTool):
         db_tickets = self._query_tickets_batch(all_lookup_keys) if all_lookup_keys else {}
 
         for row in normal_rows:
-            bc = str(row[S2_COL_BARCODE]).strip() if row[S2_COL_BARCODE] else None
+            bc = str(row[c_barcode]).strip() if row[c_barcode] else None
             if not bc:
                 continue
 
-            supplier_status = str(row[S2_COL_STATUS] or "").strip()
-            supplier_amt    = float(row[S2_COL_PAY_AMT] or 0)
+            supplier_status = str(row[c_status] or "").strip()
+            supplier_amt    = float(row[c_pay_amt] or 0)
 
             # 先用车盈网条码查，找不到则 fallback 到车站条码
             db = db_tickets.get(bc)
@@ -369,9 +414,9 @@ class ReconciliationTool(BaseTool):
 
             if row_issues:
                 issues.append({
-                    "order_no":  str(row[S2_COL_ORDER_NO] or bc),
+                    "order_no":  str(row[c_order_no] or bc),
                     "barcode":   bc,
-                    "passenger": str(row[S2_COL_PASSENGER] or ""),
+                    "passenger": str(row[c_passenger] or "") if c_passenger is not None else "",
                     "issues":    row_issues,
                 })
             else:
@@ -390,7 +435,7 @@ class ReconciliationTool(BaseTool):
         # 先按 order_no 分组
         airport_order_rows: Dict[str, List[tuple]] = {}
         for row in airport_rows:
-            order_no = str(row[S2_COL_ORDER_NO] or "").strip()
+            order_no = str(row[c_order_no] or "").strip()
             if not order_no:
                 continue
             airport_order_rows.setdefault(order_no, []).append(row)
@@ -401,13 +446,13 @@ class ReconciliationTool(BaseTool):
         )
 
         for order_no, order_rows in airport_order_rows.items():
-            valid_rows  = [r for r in order_rows if str(r[S2_COL_STATUS] or "").strip() in S2_VALID_STATUSES]
-            refund_rows = [r for r in order_rows if str(r[S2_COL_STATUS] or "").strip() in S2_REFUND_STATUSES]
-            valid_amt   = sum(float(r[S2_COL_PAY_AMT] or 0) for r in valid_rows)
+            valid_rows  = [r for r in order_rows if str(r[c_status] or "").strip() in S2_VALID_STATUSES]
+            refund_rows = [r for r in order_rows if str(r[c_status] or "").strip() in S2_REFUND_STATUSES]
+            valid_amt   = sum(float(r[c_pay_amt] or 0) for r in valid_rows)
             refund_amt  = (
                 sum(float(r[refund_amt_col] or 0) for r in refund_rows)
                 if refund_amt_col is not None
-                else sum(float(r[S2_COL_PAY_AMT] or 0) for r in refund_rows)
+                else sum(float(r[c_pay_amt] or 0) for r in refund_rows)
             )
 
             if order_no not in db_itineraries:
@@ -437,10 +482,10 @@ class ReconciliationTool(BaseTool):
 
             # 状态：有效票为主，全退则看退款状态
             if valid_rows:
-                rep_status = str(valid_rows[0][S2_COL_STATUS] or "").strip()
+                rep_status = str(valid_rows[0][c_status] or "").strip()
                 expected_states = S2_AIRPORT_ITINERARY_STATUS_MAP["valid"]
             elif refund_rows:
-                rep_status = str(refund_rows[0][S2_COL_STATUS] or "").strip()
+                rep_status = str(refund_rows[0][c_status] or "").strip()
                 expected_states = S2_AIRPORT_ITINERARY_STATUS_MAP["refund"]
             else:
                 rep_status, expected_states = "", None
