@@ -59,7 +59,8 @@ S2_COL_BARCODE   = 36   # 车盈网条码 → lulu_ticket.open_ticket_no
 S2_COL_ORDER_NO  = 27   # 订单号，用于报告展示
 S2_COL_PASSENGER = 32   # 乘车人姓名，用于报告展示
 
-S2_AIRPORT_COL_NAME = "售票渠道2"   # 列名，用于识别空港票源
+S2_AIRPORT_COL_NAME  = "售票渠道2"   # 列名，用于识别空港票源
+S2_STATION_BC_COL_NAME = "车站条码" # 列名，车盈网条码找不到时的备用查询键
 S2_AIRPORT_MARKER   = "白云机场"    # 列值含此关键字 → 空港票源
 S2_AIRPORT_RATE     = 0.03
 S2_NORMAL_RATE      = 0.10
@@ -278,12 +279,15 @@ class ReconciliationTool(BaseTool):
     # ── Supplier 2：车盈网（票级/行程级混合） ────────────────────────────────
 
     def _reconcile_supplier2(self, rows: List[tuple], headers: tuple) -> ToolResult:
-        # 找"售票渠道2"列的索引，用于区分空港票源
-        airport_col: Optional[int] = None
+        # 找"售票渠道2"和"车站条码"列的索引
+        airport_col:    Optional[int] = None
+        station_bc_col: Optional[int] = None
         for idx, h in enumerate(headers):
-            if h and str(h).strip() == S2_AIRPORT_COL_NAME:
+            hs = str(h).strip() if h else ""
+            if hs == S2_AIRPORT_COL_NAME:
                 airport_col = idx
-                break
+            elif hs == S2_STATION_BC_COL_NAME:
+                station_bc_col = idx
 
         # 按空港/非空港分流
         airport_rows: List[tuple] = []
@@ -306,8 +310,15 @@ class ReconciliationTool(BaseTool):
         normal_stats  = {"sell": 0.0, "refund": 0.0, "valid_cnt": 0}
 
         # ── 非空港：逐票对比 lulu_ticket ──────────────────────────────────────
+        # 批量预查询：车盈网条码 + 车站条码（都映射到 open_ticket_no）
         barcodes = [str(r[S2_COL_BARCODE]).strip() for r in normal_rows if r[S2_COL_BARCODE]]
-        db_tickets = self._query_tickets_batch(barcodes) if barcodes else {}
+        station_barcodes = (
+            [str(r[station_bc_col]).strip() for r in normal_rows
+             if station_bc_col is not None and r[station_bc_col] and str(r[station_bc_col]).strip()]
+            if station_bc_col is not None else []
+        )
+        all_lookup_keys = list(set(barcodes + station_barcodes))
+        db_tickets = self._query_tickets_batch(all_lookup_keys) if all_lookup_keys else {}
 
         for row in normal_rows:
             bc = str(row[S2_COL_BARCODE]).strip() if row[S2_COL_BARCODE] else None
@@ -317,7 +328,14 @@ class ReconciliationTool(BaseTool):
             supplier_status = str(row[S2_COL_STATUS] or "").strip()
             supplier_amt    = float(row[S2_COL_PAY_AMT] or 0)
 
-            if bc not in db_tickets:
+            # 先用车盈网条码查，找不到则 fallback 到车站条码
+            db = db_tickets.get(bc)
+            if db is None and station_bc_col is not None:
+                station_bc = str(row[station_bc_col] or "").strip()
+                if station_bc:
+                    db = db_tickets.get(station_bc)
+
+            if db is None:
                 not_found.append(bc)
                 continue
 
