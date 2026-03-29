@@ -53,6 +53,7 @@ class BaseTool:
             return self.execute(params)
         except Exception as e:
             logger.error(e)
+            return ToolResult.fail(str(e))
 
     def execute(self, params: dict) -> ToolResult:
         """Specific logic to be implemented by subclasses"""
