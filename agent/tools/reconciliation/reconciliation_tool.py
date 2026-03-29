@@ -339,7 +339,6 @@ class ReconciliationTool(BaseTool):
                 not_found.append(bc)
                 continue
 
-            db = db_tickets[bc]
             row_issues = []
 
             db_amt = float(db["pay_amt"] or 0)
