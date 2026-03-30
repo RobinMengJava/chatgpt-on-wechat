@@ -21,7 +21,7 @@ Config keys in config.json (optional overrides):
 import os
 import tempfile
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from agent.tools.base_tool import BaseTool, ToolResult
 from common.log import logger
@@ -43,6 +43,9 @@ _SYSTEM_FONT_CANDIDATES = [
     # Linux (common distributions)
     "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
     "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
+    "/usr/share/fonts/wqy-microhei/wqy-microhei.ttf",
+    "/usr/share/fonts/wqy-zenhei/wqy-zenhei.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
@@ -62,7 +65,7 @@ def _flatten_png(src_path: str) -> str:
     return tmp.name
 
 
-def _find_chinese_font() -> str | None:
+def _find_chinese_font() -> Optional[str]:
     """Find an available Chinese font from config or system paths."""
     configured = conf().get("itinerary_font_path", "")
     if configured and os.path.exists(configured):
@@ -294,7 +297,7 @@ class ItineraryPdfTool(BaseTool):
 
         # Logo cell (or text fallback)
         if has_logo:
-            logo_cell = RLImage(_LOGO_PATH, width=logo_w, height=logo_h,
+            logo_cell = RLImage(_flatten_png(_LOGO_PATH), width=logo_w, height=logo_h,
                                 kind="proportional")
         else:
             logo_cell = Paragraph(
@@ -304,7 +307,7 @@ class ItineraryPdfTool(BaseTool):
 
         # Tagline cell (or text fallback)
         if has_tagline:
-            tag_cell = RLImage(_TAGLINE_PATH, width=tag_w, height=tag_h,
+            tag_cell = RLImage(_flatten_png(_TAGLINE_PATH), width=tag_w, height=tag_h,
                                kind="proportional")
         else:
             tag_cell = Paragraph(
@@ -468,7 +471,7 @@ class ItineraryPdfTool(BaseTool):
         if has_tagline:
             # Center the tagline image
             from reportlab.platypus import KeepInFrame
-            tbl = Table([[RLImage(_TAGLINE_PATH, width=50 * mm, height=6 * mm,
+            tbl = Table([[RLImage(_flatten_png(_TAGLINE_PATH), width=50 * mm, height=6 * mm,
                                   kind="proportional")]],
                         colWidths=[content_width])
             tbl.setStyle(TableStyle([("ALIGN", (0, 0), (-1, -1), "CENTER")]))
