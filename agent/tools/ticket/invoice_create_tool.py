@@ -30,8 +30,8 @@ from common.log import logger
 
 INVOICE_CREATE_PATH = "/fpapi/invoice/create"
 
-_GOODS_NAME = "旅游服务*代租车费"
-_TAX_RATE = "1%"
+_GOODS_NAME = "*旅游服务*代租车费"
+_TAX_RATE = 0.01
 
 
 class InvoiceCreateTool(BaseTool):
@@ -66,7 +66,7 @@ class InvoiceCreateTool(BaseTool):
             "invoices": [
                 {
                     "invoiceId": str(invoice_id),
-                    "remark": _GOODS_NAME,
+                    "mark": "",
                     "goods": [
                         {
                             "goodsName": _GOODS_NAME,
