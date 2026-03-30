@@ -169,3 +169,32 @@ class TicketApiClient:
 
         resp.raise_for_status()
         return resp.json()
+
+    def get(self, path: str, params: dict = None) -> dict:
+        """
+        GET the ticket API with automatic token injection and 401 retry.
+
+        :param path: API path, e.g. /web/bus/luluOrder/queryWxOrder
+        :param params: Query string parameters as dict
+        :return: Parsed response JSON
+        """
+        try:
+            import requests as _requests
+        except ImportError:
+            raise RuntimeError("requests library is required. Run: pip install requests")
+
+        url = f"{self.base_url}{path}"
+        token = self.get_token()
+        headers = {"X-Access-Token": token}
+
+        resp = _requests.get(url, params=params, headers=headers, timeout=30)
+
+        if resp.status_code == 401:
+            logger.info("[TicketApiClient] Got 401, re-logging in")
+            self._clear_token()
+            token = self.login()
+            headers["X-Access-Token"] = token
+            resp = _requests.get(url, params=params, headers=headers, timeout=30)
+
+        resp.raise_for_status()
+        return resp.json()
