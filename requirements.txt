@@ -10,6 +10,7 @@ python-dotenv>=1.0.0
 PyYAML>=6.0
 croniter>=2.0.0
 qrcode
+reportlab  # itinerary PDF generation
 
 # wechatcom & wechatmp
 wechatpy

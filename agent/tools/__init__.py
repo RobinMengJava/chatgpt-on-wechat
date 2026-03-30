@@ -74,10 +74,20 @@ def _import_optional_tools():
         from agent.tools.ticket.cancel_ticket_tool import CancelTicketTool
         from agent.tools.ticket.restore_ticket_tool import RestoreTicketTool
         from agent.tools.ticket.rebook_tool import RebookExecuteTool
+        from agent.tools.ticket.invoice_create_tool import InvoiceCreateTool
+        from agent.tools.ticket.invoice_offsetting_tool import InvoiceOffsettingTool
+        from agent.tools.ticket.invoice_captcha_tool import InvoiceCaptchaTool
+        from agent.tools.ticket.invoice_resend_tool import InvoiceResendTool
+        from agent.tools.ticket.itinerary_pdf_tool import ItineraryPdfTool
         tools['RefundExecuteTool'] = RefundExecuteTool
         tools['CancelTicketTool'] = CancelTicketTool
         tools['RestoreTicketTool'] = RestoreTicketTool
         tools['RebookExecuteTool'] = RebookExecuteTool
+        tools['InvoiceCreateTool'] = InvoiceCreateTool
+        tools['InvoiceOffsettingTool'] = InvoiceOffsettingTool
+        tools['InvoiceCaptchaTool'] = InvoiceCaptchaTool
+        tools['InvoiceResendTool'] = InvoiceResendTool
+        tools['ItineraryPdfTool'] = ItineraryPdfTool
     except ImportError as e:
         logger.error(
             f"[Tools] Ticket tools not loaded - missing dependency: {e}\n"
@@ -135,6 +145,11 @@ RefundExecuteTool = _optional_tools.get('RefundExecuteTool')
 CancelTicketTool = _optional_tools.get('CancelTicketTool')
 RestoreTicketTool = _optional_tools.get('RestoreTicketTool')
 RebookExecuteTool = _optional_tools.get('RebookExecuteTool')
+InvoiceCreateTool = _optional_tools.get('InvoiceCreateTool')
+InvoiceOffsettingTool = _optional_tools.get('InvoiceOffsettingTool')
+InvoiceCaptchaTool = _optional_tools.get('InvoiceCaptchaTool')
+InvoiceResendTool = _optional_tools.get('InvoiceResendTool')
+ItineraryPdfTool = _optional_tools.get('ItineraryPdfTool')
 ReconciliationTool = _optional_tools.get('ReconciliationTool')
 
 
@@ -180,6 +195,11 @@ __all__ = [
     'CancelTicketTool',
     'RestoreTicketTool',
     'RebookExecuteTool',
+    'InvoiceCreateTool',
+    'InvoiceOffsettingTool',
+    'InvoiceCaptchaTool',
+    'InvoiceResendTool',
+    'ItineraryPdfTool',
     'ReconciliationTool',
     # Optional tools (may be None if dependencies not available)
     # 'BrowserTool'
