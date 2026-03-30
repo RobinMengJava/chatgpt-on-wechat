@@ -21,6 +21,7 @@ class QueryWxOrderTool(BaseTool):
     name: str = "query_wx_order"
     description: str = (
         "Query real-time WeChat Pay order status by merchant order number (out_trade_no / 商户订单号). "
+        "The out_trade_no is lulu_order.order_no (our system's order number). "
         "Use this to verify whether a payment was actually received by WeChat, "
         "or to check the current trade state of an order."
     )
@@ -29,7 +30,7 @@ class QueryWxOrderTool(BaseTool):
         "properties": {
             "out_trade_no": {
                 "type": "string",
-                "description": "商户订单号 (out_trade_no), e.g. lulu_order.order_no or the payment order number"
+                "description": "商户订单号，即 lulu_order.order_no，如 GZ2026030623363200126"
             }
         },
         "required": ["out_trade_no"]
