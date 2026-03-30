@@ -86,6 +86,7 @@ class InvoiceCreateTool(BaseTool):
             logger.error(f"[InvoiceCreateTool] API call failed: {e}")
             return ToolResult.fail(f"开票请求失败: {str(e)}")
 
+        logger.info(f"[InvoiceCreateTool] API response: {result}")
         success = result.get("success", False)
         msg = result.get("message") or result.get("msg", "")
 
