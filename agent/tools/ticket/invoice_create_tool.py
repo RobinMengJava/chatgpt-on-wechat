@@ -65,7 +65,7 @@ class InvoiceCreateTool(BaseTool):
         body = {
             "invoices": [
                 {
-                    "invoiceId": int(invoice_id),
+                    "invoiceId": str(invoice_id),
                     "remark": _GOODS_NAME,
                     "goods": [
                         {
