@@ -50,6 +50,18 @@ _SYSTEM_FONT_CANDIDATES = [
 ]
 
 
+def _flatten_png(src_path: str) -> str:
+    """Composite a transparent PNG onto a white background, return temp file path."""
+    from PIL import Image as PILImage
+    img = PILImage.open(src_path).convert("RGBA")
+    bg = PILImage.new("RGBA", img.size, (255, 255, 255, 255))
+    bg.paste(img, mask=img.split()[3])
+    flat = bg.convert("RGB")
+    tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    flat.save(tmp.name, "PNG")
+    return tmp.name
+
+
 def _find_chinese_font() -> str | None:
     """Find an available Chinese font from config or system paths."""
     configured = conf().get("itinerary_font_path", "")
@@ -301,7 +313,11 @@ class ItineraryPdfTool(BaseTool):
             )
 
         # QR code cell spanning both rows (or empty)
-        qr_cell = RLImage(_QR_PATH, width=qr_size, height=qr_size) if has_qr else ""
+        if has_qr:
+            _qr_flat = _flatten_png(_QR_PATH)
+            qr_cell = RLImage(_qr_flat, width=qr_size, height=qr_size)
+        else:
+            qr_cell = ""
 
         # Inner right block: [[logo, qr], [tagline, qr(span)]]
         inner = Table(
@@ -352,10 +368,17 @@ class ItineraryPdfTool(BaseTool):
             [Paragraph(f'<font color="#3DAA6E">▍</font>电话号码：{phone}', value_style)],
             [Paragraph(f'<font color="#3DAA6E">▍</font>发票号：{invoice_no}', value_style)],
         ]
+        # Meta table: 2 info rows + 1 summary row (spans full width for alignment)
         half = (content_width - 8 * mm) / 2
+        summary_para = Paragraph(
+            f'<font color="#3DAA6E">▍</font>共计 <b>{len(rows)}</b> 笔行程，'
+            f'合计：<b>¥{total:.1f}元</b>',
+            summary_style
+        )
         meta_table = Table(
             [[meta_left[0][0], meta_right[0][0]],
-             [meta_left[1][0], meta_right[1][0]]],
+             [meta_left[1][0], meta_right[1][0]],
+             [summary_para, ""]],
             colWidths=[half, half],
             spaceBefore=0,
         )
@@ -365,16 +388,9 @@ class ItineraryPdfTool(BaseTool):
             ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("SPAN", (0, 2), (1, 2)),  # summary spans full width
         ]))
         story.append(meta_table)
-        story.append(Spacer(1, 4 * mm))
-
-        # Summary line
-        story.append(Paragraph(
-            f'<font color="#3DAA6E">▍</font>共计 <b>{len(rows)}</b> 笔行程，'
-            f'合计：<b>¥{total:.1f}元</b>',
-            summary_style
-        ))
         story.append(Spacer(1, 10 * mm))
 
         # ── Section: 行程记录 ────────────────────────────────────────────────
@@ -412,8 +428,8 @@ class ItineraryPdfTool(BaseTool):
             22 * mm,  # 上车时间
             28 * mm,  # 上车站点
             28 * mm,  # 下车站点
-            16 * mm,  # 订位金额
-            table_w - (8 + 28 + 14 + 22 + 28 + 28 + 16) * mm,  # 备注（剩余）
+            20 * mm,  # 订位金额
+            table_w - (8 + 28 + 14 + 22 + 28 + 28 + 20) * mm,  # 备注（剩余）
         ]
 
         rows_table = Table(table_data, colWidths=col_widths_pts, repeatRows=1,
