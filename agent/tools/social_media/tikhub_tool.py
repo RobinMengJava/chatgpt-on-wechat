@@ -192,6 +192,10 @@ class TikHubTool(BaseTool):
             "sort_type": sort_map.get(sort_by, "popularity_descending"),
             "time_filter": time_map.get(time_range, "一周内"),
             "note_type": "不限",
+            "search_id": "",
+            "search_session_id": "",
+            "source": "explore_feed",
+            "ai_mode": 0,
         })
         err = self._check_response(resp)
         if err:
