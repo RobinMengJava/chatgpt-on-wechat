@@ -272,23 +272,26 @@ class TikHubTool(BaseTool):
 
                 data = resp.json()
                 raw = data.get("data") or {}
-                items = (raw.get("data") or raw.get("aweme_list") or raw.get("list") or []) if isinstance(raw, dict) else raw
+                items = raw.get("business_data") or []
 
                 results = []
                 for item in items[:limit]:
-                    aweme = item.get("aweme_info") or item.get("aweme") or item
-                    aweme_id = aweme.get("aweme_id") or aweme.get("id") or ""
+                    aweme = (item.get("data") or {}).get("aweme_info") or {}
+                    if not aweme:
+                        continue
+                    aweme_id = aweme.get("aweme_id") or ""
                     stats = aweme.get("statistics") or {}
                     author = aweme.get("author") or {}
                     results.append({
-                        "title": aweme.get("desc") or aweme.get("title") or "（无标题）",
+                        "title": aweme.get("desc") or "（无标题）",
                         "author": author.get("nickname") or "未知作者",
-                        "likes": stats.get("digg_count") or stats.get("like_count") or 0,
+                        "likes": stats.get("digg_count") or 0,
                         "comments": stats.get("comment_count") or 0,
                         "shares": stats.get("share_count") or 0,
-                        "plays": stats.get("play_count") or stats.get("view_count") or 0,
+                        "collects": stats.get("collect_count") or 0,
+                        "plays": stats.get("play_count") or 0,
                         "published_at": aweme.get("create_time") or 0,
-                        "link": aweme.get("share_url") or (f"https://www.douyin.com/video/{aweme_id}" if aweme_id else ""),
+                        "link": f"https://www.douyin.com/video/{aweme_id}" if aweme_id else "",
                     })
 
                 return ToolResult.success({"platform": "douyin", "action": "search",
