@@ -192,21 +192,22 @@ class TikHubTool(BaseTool):
         if err:
             return err
 
-        data = resp.json()
-        raw = data.get("data") or {}
-        items = (raw.get("items") or raw.get("notes") or raw.get("list") or []) if isinstance(raw, dict) else raw
+        resp_json = resp.json()
+        # 结构：resp_json["data"]["data"]["items"]
+        outer = resp_json.get("data") or {}
+        inner = outer.get("data") or outer
+        items = inner.get("items") or inner.get("notes") or inner.get("list") or []
 
         results = []
         for item in items[:limit]:
-            note = item.get("note_card") or item.get("note") or item
-            note_id = item.get("id") or note.get("note_id") or note.get("id", "")
-            interact = note.get("interact_info") or {}
-            user = note.get("user") or note.get("author") or {}
+            note = item.get("note") or item.get("note_card") or item
+            note_id = note.get("id") or note.get("note_id") or ""
+            user = note.get("user") or {}
             results.append({
-                "title": note.get("display_title") or note.get("title") or note.get("desc") or "（无标题）",
-                "author": user.get("nickname") or user.get("name") or "未知作者",
-                "likes": interact.get("liked_count") or interact.get("like_count") or 0,
-                "collects": interact.get("collected_count") or interact.get("collect_count") or 0,
+                "title": note.get("title") or note.get("display_title") or note.get("desc") or "（无标题）",
+                "author": user.get("nickname") or "未知作者",
+                "likes": note.get("liked_count") or 0,
+                "collects": note.get("collected_count") or 0,
                 "link": f"https://www.xiaohongshu.com/explore/{note_id}" if note_id else "",
             })
 
