@@ -125,7 +125,12 @@ class TikHubTool(BaseTool):
         if resp.status_code == 402:
             return ToolResult.fail("TikHub 余额不足，请前往 https://tikhub.io 充值")
         if resp.status_code != 200:
-            return ToolResult.fail(f"TikHub API 返回 HTTP {resp.status_code}")
+            try:
+                body = resp.json()
+            except Exception:
+                body = resp.text
+            logger.error(f"[TikHubTool] HTTP {resp.status_code} {resp.url} → {body}")
+            return ToolResult.fail(f"TikHub API 返回 HTTP {resp.status_code}，详情：{body}")
         return None
 
     def execute(self, args: Dict[str, Any]) -> ToolResult:
