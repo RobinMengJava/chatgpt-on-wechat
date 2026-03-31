@@ -208,11 +208,15 @@ class TikHubTool(BaseTool):
             note = item.get("note") or item.get("note_card") or item
             note_id = note.get("id") or note.get("note_id") or ""
             user = note.get("user") or {}
+            ts = note.get("timestamp") or note.get("update_time") or 0
             results.append({
                 "title": note.get("title") or note.get("display_title") or note.get("desc") or "（无标题）",
                 "author": user.get("nickname") or "未知作者",
                 "likes": note.get("liked_count") or 0,
                 "collects": note.get("collected_count") or 0,
+                "comments": note.get("comments_count") or 0,
+                "shares": note.get("shared_count") or 0,
+                "published_at": ts // 1000 if ts > 1e10 else ts,  # 毫秒转秒
                 "link": f"https://www.xiaohongshu.com/explore/{note_id}" if note_id else "",
             })
 
@@ -250,7 +254,10 @@ class TikHubTool(BaseTool):
                         "title": aweme.get("desc") or aweme.get("title") or "（无标题）",
                         "author": author.get("nickname") or "未知作者",
                         "likes": stats.get("digg_count") or stats.get("like_count") or 0,
+                        "comments": stats.get("comment_count") or 0,
+                        "shares": stats.get("share_count") or 0,
                         "plays": stats.get("play_count") or stats.get("view_count") or 0,
+                        "published_at": aweme.get("create_time") or 0,
                         "link": f"https://www.douyin.com/video/{aweme_id}" if aweme_id else "",
                     })
 
