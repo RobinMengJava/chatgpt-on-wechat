@@ -81,6 +81,7 @@ def _import_optional_tools():
         from agent.tools.ticket.itinerary_pdf_tool import ItineraryPdfTool
         from agent.tools.ticket.query_wx_order_tool import QueryWxOrderTool
         from agent.tools.ticket.query_wx_refund_tool import QueryWxRefundTool
+        from agent.tools.ticket.ticket_api_tool import TicketApiTool
         tools['RefundExecuteTool'] = RefundExecuteTool
         tools['CancelTicketTool'] = CancelTicketTool
         tools['RestoreTicketTool'] = RestoreTicketTool
@@ -92,6 +93,7 @@ def _import_optional_tools():
         tools['ItineraryPdfTool'] = ItineraryPdfTool
         tools['QueryWxOrderTool'] = QueryWxOrderTool
         tools['QueryWxRefundTool'] = QueryWxRefundTool
+        tools['TicketApiTool'] = TicketApiTool
     except ImportError as e:
         logger.error(
             f"[Tools] Ticket tools not loaded - missing dependency: {e}\n"
@@ -157,6 +159,7 @@ ItineraryPdfTool = _optional_tools.get('ItineraryPdfTool')
 ReconciliationTool = _optional_tools.get('ReconciliationTool')
 QueryWxOrderTool = _optional_tools.get('QueryWxOrderTool')
 QueryWxRefundTool = _optional_tools.get('QueryWxRefundTool')
+TicketApiTool = _optional_tools.get('TicketApiTool')
 
 
 # Delayed import for BrowserTool
@@ -209,6 +212,7 @@ __all__ = [
     'ReconciliationTool',
     'QueryWxOrderTool',
     'QueryWxRefundTool',
+    'TicketApiTool',
     # Optional tools (may be None if dependencies not available)
     # 'BrowserTool'
 ]
