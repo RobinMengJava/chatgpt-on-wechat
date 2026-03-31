@@ -149,10 +149,27 @@ def _execute_agent_task(task: dict, agent_bridge):
             # Don't clear history - scheduler tasks use isolated session_id so they won't pollute user conversations
             reply = agent_bridge.agent_reply(task_description, context=context, on_event=None, clear_history=False)
             
-            if reply and reply.content and reply.content.strip() != "[SILENT]":
+            # Process special markers in reply content
+            content = reply.content if reply else None
+
+            if content:
+                # [TASK_DONE] marker: task signals it has finished, delete it from store
+                if "[TASK_DONE]" in content:
+                    content = content.replace("[TASK_DONE]", "").strip()
+                    try:
+                        _task_store.delete_task(task['id'])
+                        logger.info(f"[Scheduler] Task {task['id']} self-deleted via [TASK_DONE]")
+                    except Exception as e:
+                        logger.warning(f"[Scheduler] Failed to self-delete task {task['id']}: {e}")
+
+                # [SILENT] marker: strip it out; if nothing remains, suppress sending
+                if "[SILENT]" in content:
+                    content = content.replace("[SILENT]", "").strip()
+
+            if content:
                 # Send the reply via channel
                 from channel.channel_factory import create_channel
-
+                reply.content = content
                 try:
                     channel = create_channel(channel_type)
                     if channel:
@@ -170,10 +187,8 @@ def _execute_agent_task(task: dict, agent_bridge):
                         logger.error(f"[Scheduler] Failed to create channel: {channel_type}")
                 except Exception as e:
                     logger.error(f"[Scheduler] Failed to send result: {e}")
-            elif reply and reply.content and reply.content.strip() == "[SILENT]":
-                logger.debug(f"[Scheduler] Task {task['id']} returned [SILENT], skipping send")
             else:
-                logger.error(f"[Scheduler] Task {task['id']}: No result from agent execution")
+                logger.debug(f"[Scheduler] Task {task['id']} returned empty/silent content, skipping send")
                 
         except Exception as e:
             logger.error(f"[Scheduler] Failed to execute task via Agent: {e}")

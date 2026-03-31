@@ -114,22 +114,18 @@ ai_task: |
 
   2. 根据 fp_task_state 处理：
 
-     终态——通知用户后停止轮询：
-     - 1（成功）→ 回复"✅ 发票开具成功！发票号：{fp_electronic_invoice_no}"
-     - 3（等待验证码）→ 回复"⚠️ 开票平台需要短信验证码，请提供验证码后回复"
-     - -1（执行错误）→ 回复"❌ 开票失败：{fp_message}。如需重试请发送"重发发票 {invoice_id}""
-     - -2（任务中断）→ 回复"❌ 开票任务中断。如需重试请发送"重发发票 {invoice_id}""
+     终态——在通知内容末尾加上 [TASK_DONE] 标记，系统会自动停止轮询：
+     - 1（成功）→ 回复"✅ 发票开具成功！发票号：{fp_electronic_invoice_no} [TASK_DONE]"
+     - 3（等待验证码）→ 回复"⚠️ 开票平台需要短信验证码，请提供验证码后回复 [TASK_DONE]"
+     - -1（执行错误）→ 回复"❌ 开票失败：{fp_message}。如需重试请发送"重发发票 {invoice_id}" [TASK_DONE]"
+     - -2（任务中断）→ 回复"❌ 开票任务中断。如需重试请发送"重发发票 {invoice_id}" [TASK_DONE]"
 
      超时——通知用户后停止轮询：
      - fp_task_state 为 null 或 2，且当前时间距开票提交时间超过 10 分钟 →
-       回复"⏰ 开票任务已超过10分钟仍未完成，请到后台手动检查发票 ID {invoice_id} 的状态"
+       回复"⏰ 开票任务已超过10分钟仍未完成，请到后台手动检查发票 ID {invoice_id} 的状态 [TASK_DONE]"
 
      继续等待——静默，不发送任何消息：
-     - fp_task_state 为 null 或 2，且未超时 → 回复 [SILENT]
-
-  3. 遇到终态或超时时，删除本轮询任务：
-     调用 scheduler tool，action=list，找到 name 为 invoice_poll_{invoice_id} 的任务，
-     获取其 task_id，再调用 action=delete 将其删除。
+     - fp_task_state 为 null 或 2，且未超时 → 仅回复 [SILENT]，不输出任何其他内容
 ```
 
 **告知运营：**
@@ -211,22 +207,18 @@ ai_task: |
 
   2. 根据 fp_offset_task_state 处理：
 
-     终态——通知用户后停止轮询：
-     - 1（成功）→ 回复"✅ 红冲成功！"
-     - 3（等待验证码）→ 回复"⚠️ 开票平台需要短信验证码，请提供验证码后回复"
-     - -1（执行错误）→ 回复"❌ 红冲失败：{fp_message}。如需重试请发送"重发红冲 {invoice_id}""
-     - -2（任务中断）→ 回复"❌ 红冲任务中断。如需重试请发送"重发红冲 {invoice_id}""
+     终态——在通知内容末尾加上 [TASK_DONE] 标记，系统会自动停止轮询：
+     - 1（成功）→ 回复"✅ 红冲成功！ [TASK_DONE]"
+     - 3（等待验证码）→ 回复"⚠️ 开票平台需要短信验证码，请提供验证码后回复 [TASK_DONE]"
+     - -1（执行错误）→ 回复"❌ 红冲失败：{fp_message}。如需重试请发送"重发红冲 {invoice_id}" [TASK_DONE]"
+     - -2（任务中断）→ 回复"❌ 红冲任务中断。如需重试请发送"重发红冲 {invoice_id}" [TASK_DONE]"
 
      超时——通知用户后停止轮询：
      - fp_offset_task_state 为 null 或 2，且当前时间距红冲提交时间超过 10 分钟 →
-       回复"⏰ 红冲任务已超过10分钟仍未完成，请到后台手动检查发票 ID {invoice_id} 的状态"
+       回复"⏰ 红冲任务已超过10分钟仍未完成，请到后台手动检查发票 ID {invoice_id} 的状态 [TASK_DONE]"
 
      继续等待——静默，不发送任何消息：
-     - fp_offset_task_state 为 null 或 2，且未超时 → 回复 [SILENT]
-
-  3. 遇到终态或超时时，删除本轮询任务：
-     调用 scheduler tool，action=list，找到 name 为 offset_poll_{invoice_id} 的任务，
-     获取其 task_id，再调用 action=delete 将其删除。
+     - fp_offset_task_state 为 null 或 2，且未超时 → 仅回复 [SILENT]，不输出任何其他内容
 ```
 
 **告知运营：**
