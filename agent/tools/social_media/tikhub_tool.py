@@ -181,11 +181,12 @@ class TikHubTool(BaseTool):
         sort_map = {"hot": "popularity_descending", "recent": "time_descending"}
         time_map = {"day": "一天内", "week": "一周内", "half_year": "半年内"}
 
-        resp = self._request("/api/v1/xiaohongshu/web/search_notes", {
+        resp = self._request("/api/v1/xiaohongshu/app_v2/search_notes", {
             "keyword": keyword,
             "page": 1,
-            "sort": sort_map.get(sort_by, "popularity_descending"),
-            "noteTime": time_map.get(time_range, "一周内")
+            "sort_type": sort_map.get(sort_by, "popularity_descending"),
+            "time_filter": time_map.get(time_range, "一周内"),
+            "note_type": "不限",
         })
         err = self._check_response(resp)
         if err:
@@ -266,7 +267,7 @@ class TikHubTool(BaseTool):
             return ToolResult.fail("user_info 操作需要提供 user_id 参数")
 
         if platform == "xiaohongshu":
-            resp = self._request("/api/v1/xiaohongshu/web/fetch_user_info", {"sec_user_id": user_id})
+            resp = self._request("/api/v1/xiaohongshu/app_v2/get_user_info", {"user_id": user_id})
         else:
             resp = self._request("/api/v1/douyin/web/handler_user_profile_v3", {"sec_uid": user_id})
 
@@ -313,8 +314,8 @@ class TikHubTool(BaseTool):
         limit = min(int(args.get("limit") or 5), 20)
 
         if platform == "xiaohongshu":
-            resp = self._request("/api/v1/xiaohongshu/web/fetch_user_posted_notes",
-                                 {"sec_user_id": user_id, "cursor": 0, "count": limit})
+            resp = self._request("/api/v1/xiaohongshu/app_v2/get_user_posted_notes",
+                                 {"user_id": user_id, "cursor": ""})
         else:
             resp = self._request("/api/v1/douyin/app/v3/fetch_user_posted_videos",
                                  {"sec_uid": user_id, "count": limit})
