@@ -117,7 +117,9 @@ class TikHubTool(BaseTool):
         url = f"{BASE_URL}{endpoint}"
         if method == "POST":
             return requests.post(url, headers=self._get_headers(), json=body or {}, timeout=DEFAULT_TIMEOUT)
-        return requests.get(url, headers=self._get_headers(), params=params or {}, timeout=DEFAULT_TIMEOUT)
+        # Strip empty-string params — API rejects empty values for optional fields
+        clean_params = {k: v for k, v in (params or {}).items() if v != ""}
+        return requests.get(url, headers=self._get_headers(), params=clean_params, timeout=DEFAULT_TIMEOUT)
 
     def _check_response(self, resp: requests.Response) -> Optional[ToolResult]:
         if resp.status_code == 401:
