@@ -149,10 +149,10 @@ def _execute_agent_task(task: dict, agent_bridge):
             # Don't clear history - scheduler tasks use isolated session_id so they won't pollute user conversations
             reply = agent_bridge.agent_reply(task_description, context=context, on_event=None, clear_history=False)
             
-            if reply and reply.content:
+            if reply and reply.content and reply.content.strip() != "[SILENT]":
                 # Send the reply via channel
                 from channel.channel_factory import create_channel
-                
+
                 try:
                     channel = create_channel(channel_type)
                     if channel:
@@ -162,7 +162,7 @@ def _execute_agent_task(task: dict, agent_bridge):
                             if request_id:
                                 channel.request_to_session[request_id] = receiver
                                 logger.debug(f"[Scheduler] Registered request_id {request_id} -> session {receiver}")
-                        
+
                         # Send the reply
                         channel.send(reply, context)
                         logger.info(f"[Scheduler] Task {task['id']} executed successfully, result sent to {receiver}")
@@ -170,6 +170,8 @@ def _execute_agent_task(task: dict, agent_bridge):
                         logger.error(f"[Scheduler] Failed to create channel: {channel_type}")
                 except Exception as e:
                     logger.error(f"[Scheduler] Failed to send result: {e}")
+            elif reply and reply.content and reply.content.strip() == "[SILENT]":
+                logger.debug(f"[Scheduler] Task {task['id']} returned [SILENT], skipping send")
             else:
                 logger.error(f"[Scheduler] Task {task['id']}: No result from agent execution")
                 

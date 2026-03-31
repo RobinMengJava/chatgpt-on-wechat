@@ -92,31 +92,51 @@ ORDER BY id
 确认后，调用 `invoice_create` tool：
 - 参数：`invoice_id`（从第一步查到的 `i.id`）
 
-### 第五步：查询任务状态
+### 第五步：设置自动状态监听
 
-调用成功后，提示"开票任务已提交，正在处理..."，然后查询状态：
+`invoice_create` 调用成功后，立即用 `scheduler` tool 创建轮询任务，然后告知运营。
 
-```sql
-SELECT
-    fp_task_id,
-    fp_task_state,
-    fp_create_invoice_status,
-    fp_electronic_invoice_no,
-    fp_message
-FROM lulu_invoice
-WHERE id = {invoice_id}
+**创建轮询任务：**
+
+```
+action: create
+name: invoice_poll_{invoice_id}
+schedule_type: interval
+schedule_value: "60"
+ai_task: |
+  【开票状态轮询】invoice_id={invoice_id}，开票提交时间={当前ISO时间}
+
+  执行步骤：
+  1. 查询数据库：
+     SELECT fp_task_state, fp_electronic_invoice_no, fp_message
+     FROM lulu_invoice
+     WHERE id = {invoice_id}
+
+  2. 根据 fp_task_state 处理：
+
+     终态——通知用户后停止轮询：
+     - 1（成功）→ 回复"✅ 发票开具成功！发票号：{fp_electronic_invoice_no}"
+     - 3（等待验证码）→ 回复"⚠️ 开票平台需要短信验证码，请提供验证码后回复"
+     - -1（执行错误）→ 回复"❌ 开票失败：{fp_message}。如需重试请发送"重发发票 {invoice_id}""
+     - -2（任务中断）→ 回复"❌ 开票任务中断。如需重试请发送"重发发票 {invoice_id}""
+
+     超时——通知用户后停止轮询：
+     - fp_task_state 为 null 或 2，且当前时间距开票提交时间超过 10 分钟 →
+       回复"⏰ 开票任务已超过10分钟仍未完成，请到后台手动检查发票 ID {invoice_id} 的状态"
+
+     继续等待——静默，不发送任何消息：
+     - fp_task_state 为 null 或 2，且未超时 → 回复 [SILENT]
+
+  3. 遇到终态或超时时，删除本轮询任务：
+     调用 scheduler tool，action=list，找到 name 为 invoice_poll_{invoice_id} 的任务，
+     获取其 task_id，再调用 action=delete 将其删除。
 ```
 
-根据 `fp_task_state` 处理：
+**告知运营：**
 
-| 状态 | 含义 | 处理方式 |
-|------|------|----------|
-| `1` | 成功 | 告知运营"开票成功，发票号：{fp_electronic_invoice_no}" |
-| `2` | 执行中 | 告知运营"任务执行中，请稍后再次查询" |
-| `3` | 等待验证码 | → 跳转[验证码处理] |
-| `-1` | 执行错误 | → 跳转[任务失败处理]，提示 fp_message |
-| `-2` | 任务中断 | → 跳转[任务失败处理] |
-| `null` | 尚未更新 | 告知运营"任务刚提交，请稍等后重新查询" |
+```
+✅ 开票任务已提交。系统将持续监听开票结果，有更新时会主动通知您（最多等待10分钟）。
+```
 
 ---
 
@@ -169,29 +189,51 @@ WHERE o.order_no = '{订单号}'
 确认后，调用 `invoice_offsetting` tool：
 - 参数：`invoice_id`
 
-### 第四步：查询任务状态
+### 第四步：设置自动状态监听
 
-调用成功后，提示"红冲任务已提交，正在处理..."，然后查询状态：
+`invoice_offsetting` 调用成功后，立即用 `scheduler` tool 创建轮询任务，然后告知运营。
 
-```sql
-SELECT
-    fp_offset_invoice_task_id,
-    fp_offset_task_state,
-    fp_offset_invoice_status
-FROM lulu_invoice
-WHERE id = {invoice_id}
+**创建轮询任务：**
+
+```
+action: create
+name: offset_poll_{invoice_id}
+schedule_type: interval
+schedule_value: "60"
+ai_task: |
+  【红冲状态轮询】invoice_id={invoice_id}，红冲提交时间={当前ISO时间}
+
+  执行步骤：
+  1. 查询数据库：
+     SELECT fp_offset_task_state, fp_offset_invoice_status, fp_message
+     FROM lulu_invoice
+     WHERE id = {invoice_id}
+
+  2. 根据 fp_offset_task_state 处理：
+
+     终态——通知用户后停止轮询：
+     - 1（成功）→ 回复"✅ 红冲成功！"
+     - 3（等待验证码）→ 回复"⚠️ 开票平台需要短信验证码，请提供验证码后回复"
+     - -1（执行错误）→ 回复"❌ 红冲失败：{fp_message}。如需重试请发送"重发红冲 {invoice_id}""
+     - -2（任务中断）→ 回复"❌ 红冲任务中断。如需重试请发送"重发红冲 {invoice_id}""
+
+     超时——通知用户后停止轮询：
+     - fp_offset_task_state 为 null 或 2，且当前时间距红冲提交时间超过 10 分钟 →
+       回复"⏰ 红冲任务已超过10分钟仍未完成，请到后台手动检查发票 ID {invoice_id} 的状态"
+
+     继续等待——静默，不发送任何消息：
+     - fp_offset_task_state 为 null 或 2，且未超时 → 回复 [SILENT]
+
+  3. 遇到终态或超时时，删除本轮询任务：
+     调用 scheduler tool，action=list，找到 name 为 offset_poll_{invoice_id} 的任务，
+     获取其 task_id，再调用 action=delete 将其删除。
 ```
 
-根据 `fp_offset_task_state` 处理：
+**告知运营：**
 
-| 状态 | 含义 | 处理方式 |
-|------|------|----------|
-| `1` | 成功 | 告知运营"红冲成功" |
-| `2` | 执行中 | 告知运营"任务执行中，请稍后再次查询" |
-| `3` | 等待验证码 | → 跳转[验证码处理]，task_id 使用 fp_offset_invoice_task_id |
-| `-1` | 执行错误 | → 跳转[任务失败处理] |
-| `-2` | 任务中断 | → 跳转[任务失败处理] |
-| `null` | 尚未更新 | 告知运营"任务刚提交，请稍等后重新查询" |
+```
+✅ 红冲任务已提交。系统将持续监听红冲结果，有更新时会主动通知您（最多等待10分钟）。
+```
 
 ---
 
