@@ -65,8 +65,18 @@ class TikHubTool(BaseTool):
             },
             "time_range": {
                 "type": "string",
-                "enum": ["day", "week", "half_year"],
-                "description": "[search] 时间范围：day（一天内）/ week（一周内）/ half_year（半年内），默认 week"
+                "enum": ["all", "day", "week", "half_year"],
+                "description": "[search] 时间范围：all（不限）/ day（一天内）/ week（一周内）/ half_year（半年内），默认 week"
+            },
+            "filter_duration": {
+                "type": "string",
+                "enum": ["all", "short", "mid", "long"],
+                "description": "[search][douyin] 视频时长过滤：all（不限）/ short（1分钟内）/ mid（1-5分钟）/ long（5分钟以上），默认 all"
+            },
+            "content_type": {
+                "type": "string",
+                "enum": ["all", "video", "image", "article"],
+                "description": "[search][douyin] 内容类型：all（全部）/ video（视频）/ image（图集）/ article（文章），默认 all"
             },
             "user_id": {
                 "type": "string",
@@ -117,9 +127,7 @@ class TikHubTool(BaseTool):
         url = f"{BASE_URL}{endpoint}"
         if method == "POST":
             return requests.post(url, headers=self._get_headers(), json=body or {}, timeout=DEFAULT_TIMEOUT)
-        # Strip empty-string params — API rejects empty values for optional fields
-        clean_params = {k: v for k, v in (params or {}).items() if v != ""}
-        return requests.get(url, headers=self._get_headers(), params=clean_params, timeout=DEFAULT_TIMEOUT)
+        return requests.get(url, headers=self._get_headers(), params=params or {}, timeout=DEFAULT_TIMEOUT)
 
     def _check_response(self, resp: requests.Response) -> Optional[ToolResult]:
         if resp.status_code == 401:
@@ -182,7 +190,9 @@ class TikHubTool(BaseTool):
 
         if platform == "xiaohongshu":
             return self._search_xhs(keyword, limit, sort_by, time_range)
-        return self._search_douyin(keyword, limit, sort_by, time_range)
+        filter_duration = args.get("filter_duration") or "all"
+        content_type = args.get("content_type") or "all"
+        return self._search_douyin(keyword, limit, sort_by, time_range, filter_duration, content_type)
 
     def _search_xhs(self, keyword: str, limit: int, sort_by: str, time_range: str) -> ToolResult:
         sort_map = {"hot": "popularity_descending", "recent": "time_descending"}
@@ -229,19 +239,33 @@ class TikHubTool(BaseTool):
         return ToolResult.success({"platform": "xiaohongshu", "action": "search",
                                    "keyword": keyword, "count": len(results), "results": results})
 
-    def _search_douyin(self, keyword: str, limit: int, sort_by: str, time_range: str) -> ToolResult:
+    def _search_douyin(self, keyword: str, limit: int, sort_by: str, time_range: str,
+                       filter_duration: str = "all", content_type: str = "all") -> ToolResult:
+        # sort_type: 0=综合, 1=最多点赞, 2=最新
         sort_map = {"hot": "1", "recent": "2"}
-        time_map = {"day": "1", "week": "7", "half_year": "180"}
+        # publish_time: 0=不限, 1=一天内, 7=一周内, 180=半年内
+        time_map = {"all": "0", "day": "1", "week": "7", "half_year": "180"}
+        # filter_duration: 0=不限, 0-1=1分钟内, 1-5=1-5分钟, 5-10000=5分钟以上
+        duration_map = {"all": "0", "short": "0-1", "mid": "1-5", "long": "5-10000"}
+        # content_type: 0=全部, 1=视频, 2=图集, 3=文章
+        ctype_map = {"all": "0", "video": "1", "image": "2", "article": "3"}
+
+        body = {
+            "keyword": keyword,
+            "cursor": 0,
+            "sort_type": sort_map.get(sort_by, "0"),
+            "publish_time": time_map.get(time_range, "0"),
+            "filter_duration": duration_map.get(filter_duration, "0"),
+            "content_type": ctype_map.get(content_type, "0"),
+            "search_id": "",
+            "backtrace": "",
+        }
 
         last_error = None
         for attempt in range(3):
             try:
-                resp = self._request("/api/v1/douyin/web/fetch_video_search_result", {
-                    "keyword": keyword,
-                    "sort_type": sort_map.get(sort_by, "1"),
-                    "publish_time": time_map.get(time_range, "7"),
-                    "count": limit
-                })
+                resp = self._request("/api/v1/douyin/search/fetch_general_search_v2",
+                                     method="POST", body=body)
                 err = self._check_response(resp)
                 if err:
                     return err
@@ -264,7 +288,7 @@ class TikHubTool(BaseTool):
                         "shares": stats.get("share_count") or 0,
                         "plays": stats.get("play_count") or stats.get("view_count") or 0,
                         "published_at": aweme.get("create_time") or 0,
-                        "link": f"https://www.douyin.com/video/{aweme_id}" if aweme_id else "",
+                        "link": aweme.get("share_url") or (f"https://www.douyin.com/video/{aweme_id}" if aweme_id else ""),
                     })
 
                 return ToolResult.success({"platform": "douyin", "action": "search",
