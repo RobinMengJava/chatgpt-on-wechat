@@ -194,6 +194,7 @@ available_setting = {
     "Minimax_group_id": "",
     "Minimax_base_url": "",
     "web_port": 9899,
+    "tikhub_api_key": "",  # TikHub API key，用于搜索小红书/抖音内容，申请地址：https://tikhub.io
     "agent": True,  # 是否开启Agent模式
     "agent_workspace": "~/cow",  # agent工作空间路径，用于存储skills、memory等
     "agent_max_context_tokens": 50000,  # Agent模式下最大上下文tokens
@@ -389,6 +390,7 @@ def load_config():
         "qq_app_id": "QQ_APP_ID",
         "qq_app_secret": "QQ_APP_SECRET",
         "weixin_token": "WEIXIN_TOKEN",
+        "tikhub_api_key": "TIKHUB_API_KEY",
     }
     injected = 0
     for conf_key, env_key in _CONFIG_TO_ENV.items():

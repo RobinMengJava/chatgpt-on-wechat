@@ -103,6 +103,15 @@ def _import_optional_tools():
     except Exception as e:
         logger.error(f"[Tools] Ticket tools failed to load: {e}")
 
+    # TikHub social media search tool
+    try:
+        from agent.tools.social_media.tikhub_tool import TikHubTool
+        tools['TikHubTool'] = TikHubTool
+    except ImportError as e:
+        logger.error(f"[Tools] TikHubTool not loaded - missing dependency: {e}")
+    except Exception as e:
+        logger.error(f"[Tools] TikHubTool failed to load: {e}")
+
     # Reconciliation Tool (requires openpyxl + pymysql)
     try:
         from agent.tools.reconciliation.reconciliation_tool import ReconciliationTool
@@ -160,6 +169,7 @@ ReconciliationTool = _optional_tools.get('ReconciliationTool')
 QueryWxOrderTool = _optional_tools.get('QueryWxOrderTool')
 QueryWxRefundTool = _optional_tools.get('QueryWxRefundTool')
 TicketApiTool = _optional_tools.get('TicketApiTool')
+TikHubTool = _optional_tools.get('TikHubTool')
 
 
 # Delayed import for BrowserTool
@@ -213,6 +223,7 @@ __all__ = [
     'QueryWxOrderTool',
     'QueryWxRefundTool',
     'TicketApiTool',
+    'TikHubTool',
     # Optional tools (may be None if dependencies not available)
     # 'BrowserTool'
 ]
