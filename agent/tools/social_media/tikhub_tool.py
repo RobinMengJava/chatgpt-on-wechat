@@ -17,7 +17,7 @@ Base URL: https://api.tikhub.dev (mainland China, no proxy needed)
 
 import os
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import requests
 
@@ -106,7 +106,7 @@ class TikHubTool(BaseTool):
             "Content-Type": "application/json"
         }
 
-    def _check_auth(self) -> ToolResult | None:
+    def _check_auth(self) -> Optional[ToolResult]:
         if not self.is_available():
             return ToolResult.fail(
                 "未配置 tikhub_api_key，请在 config.json 中添加：\"tikhub_api_key\": \"your_key\""
@@ -119,7 +119,7 @@ class TikHubTool(BaseTool):
             return requests.post(url, headers=self._get_headers(), json=body or {}, timeout=DEFAULT_TIMEOUT)
         return requests.get(url, headers=self._get_headers(), params=params or {}, timeout=DEFAULT_TIMEOUT)
 
-    def _check_response(self, resp: requests.Response) -> ToolResult | None:
+    def _check_response(self, resp: requests.Response) -> Optional[ToolResult]:
         if resp.status_code == 401:
             return ToolResult.fail("TIKHUB_API_KEY 无效，请检查 config.json 中的 tikhub_api_key")
         if resp.status_code == 402:
