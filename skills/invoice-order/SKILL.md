@@ -245,12 +245,45 @@ ai_task: |
    - 红冲场景：`task_id` = `fp_offset_invoice_task_id`
    - `captcha` = 用户提供的验证码
 
-3. 提交成功后，创建新的轮询任务（与开票/红冲流程第五步/第四步完全相同的参数，包含 max_runs: 15），
-   然后告知运营：
+3. 提交成功后，用 `scheduler` tool 创建验证码后续轮询任务，然后告知运营：
+
    ```
    ✅ 验证码已提交，系统将持续监听结果，有更新时会主动通知您。
    ```
-   **重要：不要再查询数据库状态**，等待轮询任务检测到结果后自动通知，避免因回调延迟而重复提交验证码。
+
+   **创建轮询任务：**
+
+   ```
+   action: create
+   name: invoice_captcha_poll_{invoice_id}   # 红冲场景改为 offset_captcha_poll_{invoice_id}
+   schedule_type: interval
+   schedule_value: "60"
+   max_runs: 15
+   ai_task: |
+     【验证码提交后状态轮询】invoice_id={invoice_id}
+
+     执行步骤：
+     1. 查询数据库：
+        # 开票场景：
+        SELECT fp_task_state, fp_electronic_invoice_no, fp_message
+        FROM lulu_invoice WHERE id = {invoice_id}
+        # 红冲场景：
+        SELECT fp_offset_task_state, fp_offset_invoice_status, fp_message
+        FROM lulu_invoice WHERE id = {invoice_id}
+
+     2. 根据状态处理（开票以 fp_task_state 为准，红冲以 fp_offset_task_state 为准）：
+
+        有新结果——通知运营并加 [TASK_DONE] 停止轮询：
+        - 1（成功）→ 开票：回复"✅ 发票开具成功！发票号：{fp_electronic_invoice_no} [TASK_DONE]"
+                      红冲：回复"✅ 红冲成功！ [TASK_DONE]"
+        - -1（执行错误）→ 回复"❌ 开票失败：{fp_message}。如需重试请发送"重发发票 {invoice_id}" [TASK_DONE]"
+        - -2（任务中断）→ 回复"❌ 开票任务中断。如需重试请发送"重发发票 {invoice_id}" [TASK_DONE]"
+
+        无新结果（回调未到）——静默等待，不发消息：
+        - 状态仍为 3、2、null → 仅回复 [SILENT]，不输出任何其他内容
+   ```
+
+   **重要：不要再查询数据库状态**，不要重新提交验证码，等待轮询任务检测到结果后自动通知。超时由 max_runs 自动兜底删除任务。
 
 ---
 
