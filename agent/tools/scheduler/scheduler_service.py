@@ -75,13 +75,27 @@ class SchedulerService:
                 if self._is_task_due(task, now):
                     logger.info(f"[Scheduler] Executing task: {task['id']} - {task['name']}")
                     self._execute_task(task)
-                    
+
+                    # Task may have been self-deleted via [TASK_DONE] inside the callback
+                    if self.task_store.get_task(task['id']) is None:
+                        logger.debug(f"[Scheduler] Task {task['id']} was deleted during execution, skipping update")
+                        continue
+
+                    # Increment run count and check max_runs
+                    run_count = task.get("run_count", 0) + 1
+                    max_runs = task.get("max_runs")
+                    if max_runs and run_count >= max_runs:
+                        self.task_store.delete_task(task['id'])
+                        logger.info(f"[Scheduler] Task {task['id']} reached max_runs ({max_runs}), auto-deleted")
+                        continue
+
                     # Update next run time
                     next_run = self._calculate_next_run(task, now)
                     if next_run:
                         self.task_store.update_task(task['id'], {
                             "next_run_at": next_run.isoformat(),
-                            "last_run_at": now.isoformat()
+                            "last_run_at": now.isoformat(),
+                            "run_count": run_count
                         })
                     else:
                         # One-time task completed, remove it

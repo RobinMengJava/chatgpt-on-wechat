@@ -103,6 +103,7 @@ action: create
 name: invoice_poll_{invoice_id}
 schedule_type: interval
 schedule_value: "60"
+max_runs: 15
 ai_task: |
   【开票状态轮询】invoice_id={invoice_id}，开票提交时间={当前ISO时间}
 
@@ -196,6 +197,7 @@ action: create
 name: offset_poll_{invoice_id}
 schedule_type: interval
 schedule_value: "60"
+max_runs: 15
 ai_task: |
   【红冲状态轮询】invoice_id={invoice_id}，红冲提交时间={当前ISO时间}
 
@@ -243,7 +245,12 @@ ai_task: |
    - 红冲场景：`task_id` = `fp_offset_invoice_task_id`
    - `captcha` = 用户提供的验证码
 
-3. 提交成功后，提示"验证码已提交，请稍后查询状态"，再次执行对应流程的状态查询步骤。
+3. 提交成功后，创建新的轮询任务（与开票/红冲流程第五步/第四步完全相同的参数，包含 max_runs: 15），
+   然后告知运营：
+   ```
+   ✅ 验证码已提交，系统将持续监听结果，有更新时会主动通知您。
+   ```
+   **重要：不要再查询数据库状态**，等待轮询任务检测到结果后自动通知，避免因回调延迟而重复提交验证码。
 
 ---
 

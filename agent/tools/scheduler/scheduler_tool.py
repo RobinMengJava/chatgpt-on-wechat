@@ -64,6 +64,10 @@ class SchedulerTool(BaseTool):
             "schedule_value": {
                 "type": "string",
                 "description": "调度值: cron表达式/间隔秒数/时间(+5s,+10m,+1h或ISO格式)"
+            },
+            "max_runs": {
+                "type": "integer",
+                "description": "最大执行次数，达到后自动删除任务（可选，适用于有限次数的轮询任务）"
             }
         },
         "required": ["action"]
@@ -190,8 +194,13 @@ class SchedulerTool(BaseTool):
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
             "schedule": schedule,
-            "action": action
+            "action": action,
+            "run_count": 0
         }
+
+        max_runs = kwargs.get("max_runs")
+        if max_runs:
+            task_data["max_runs"] = int(max_runs)
         
         # Calculate initial next_run_at
         next_run = self._calculate_next_run(task_data)
