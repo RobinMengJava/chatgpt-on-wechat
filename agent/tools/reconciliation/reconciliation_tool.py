@@ -59,7 +59,7 @@ S2_COL_BARCODE   = "车盈网条码"
 S2_COL_ORDER_NO  = "订单号"
 S2_COL_PASSENGER = "乘车人姓名"
 
-S2_AIRPORT_COL_NAME    = "售票渠道2"        # 列名，用于识别空港票源
+S2_AIRPORT_COL_NAME    = "售票渠道"          # 列名，用于识别空港票源
 S2_STATION_BC_COL_NAME = "车站条码"         # 列名，车盈网条码找不到时的备用查询键
 S2_REVENUE_COL_NAME    = "营收金额(含优惠)"  # 列名，有效票=支付金额，已退票=退款手续费
 S2_REFUND_AMT_COL_NAME = "退票金额"         # 列名，退款金额，用于财务汇总退票金额
