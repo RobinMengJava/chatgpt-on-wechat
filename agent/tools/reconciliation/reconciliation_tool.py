@@ -337,7 +337,7 @@ class ReconciliationTool(BaseTool):
         c_barcode     = cols[S2_COL_BARCODE]
         c_order_no    = cols[S2_COL_ORDER_NO]
         c_passenger   = cols[S2_COL_PASSENGER]
-        airport_col   = cols[S2_AIRPORT_COL_NAME]
+        airport_col   = self._find_col(headers, S2_AIRPORT_COL_NAME)  # 重名列取第一个
         station_bc_col = cols[S2_STATION_BC_COL_NAME]
         revenue_col   = cols[S2_REVENUE_COL_NAME]
         refund_amt_col = cols[S2_REFUND_AMT_COL_NAME]
