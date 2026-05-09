@@ -116,8 +116,11 @@ class OpenAICompatibleBot:
                 return self._handle_sync_response(request_params, api_key, api_base)
                 
         except Exception as e:
-            error_msg = str(e)
-            logger.error(f"[{self.__class__.__name__}] call_with_tools error: {error_msg}")
+            error_msg = str(e) or e.__class__.__name__
+            logger.error(
+                f"[{self.__class__.__name__}] call_with_tools error: {e!r}",
+                exc_info=True,
+            )
             if stream:
                 def error_generator():
                     yield {
@@ -155,27 +158,66 @@ class OpenAICompatibleBot:
             }
     
     def _handle_stream_response(self, request_params, api_key, api_base):
-        """Handle streaming OpenAI API response"""
+        """Handle streaming OpenAI API response.
+
+        Defensive: OpenAI-compatible 中转网关（OneAPI/NewAPI 等）在异常情况下
+        可能返回非标准 SSE（顶层是字符串、JSON 解析后不是 dict 等），
+        这里要确保任何意外形态都能被定位并降级为 error chunk，而不是把
+        奇怪的对象继续往下游 yield 触发 'str' object has no attribute 'get'。
+        """
+        import traceback as _tb
+
+        bot_name = self.__class__.__name__
+        model_for_log = request_params.get("model")
         try:
-            # Build kwargs with explicit API configuration
             kwargs = dict(request_params)
             if api_key:
                 kwargs["api_key"] = api_key
             if api_base:
                 kwargs["api_base"] = api_base
-            
+
             stream = openai.ChatCompletion.create(**kwargs)
-            
-            # Stream chunks to caller
-            for chunk in stream:
-                yield chunk
-                
         except Exception as e:
-            logger.error(f"[{self.__class__.__name__}] stream response error: {e}")
+            logger.error(
+                f"[{bot_name}] stream create failed: {e!r} | model={model_for_log} api_base={api_base}"
+            )
+            logger.error(f"[{bot_name}] traceback:\n{_tb.format_exc()}")
             yield {
                 "error": True,
-                "message": str(e),
-                "status_code": 500
+                "message": str(e) or e.__class__.__name__,
+                "status_code": 500,
+            }
+            return
+
+        chunk_index = 0
+        try:
+            for chunk in stream:
+                chunk_index += 1
+                # 防御：上游服务可能 yield 出非 dict（字符串/None/list...）。
+                # 直接放行会让下游 chunk.get(...) 报 'str' object has no attribute 'get'。
+                if not isinstance(chunk, dict):
+                    # OpenAIObject 继承 dict，所以正常 chunk 不会走这里。
+                    chunk_repr = repr(chunk)
+                    if len(chunk_repr) > 500:
+                        chunk_repr = chunk_repr[:500] + "...(truncated)"
+                    logger.warning(
+                        f"[{bot_name}] non-dict stream chunk #{chunk_index} "
+                        f"(type={type(chunk).__name__}): {chunk_repr}"
+                    )
+                    # 跳过非法 chunk，避免污染下游
+                    continue
+                yield chunk
+
+        except Exception as e:
+            logger.error(
+                f"[{bot_name}] stream response error: {e!r} | "
+                f"model={model_for_log} api_base={api_base} chunk_index={chunk_index}"
+            )
+            logger.error(f"[{bot_name}] traceback:\n{_tb.format_exc()}")
+            yield {
+                "error": True,
+                "message": str(e) or e.__class__.__name__,
+                "status_code": 500,
             }
     
     def _convert_tools_to_openai_format(self, tools):
@@ -229,6 +271,22 @@ class OpenAICompatibleBot:
             
             # Handle list content (Claude format with content blocks)
             if isinstance(content, list):
+                # 防御：历史消息里偶尔会混入字符串 block（来自旧 session
+                # 或 buggy plugin），统一规整成 dict 形态再往下走，避免
+                # block.get(...) 抛 'str' object has no attribute 'get'。
+                normalized_blocks = []
+                for block in content:
+                    if isinstance(block, dict):
+                        normalized_blocks.append(block)
+                    elif isinstance(block, str):
+                        normalized_blocks.append({"type": "text", "text": block})
+                    else:
+                        logger.warning(
+                            f"[OpenAICompatible] dropping unsupported content block "
+                            f"type={type(block).__name__} in role={role}"
+                        )
+                content = normalized_blocks
+
                 # Check if this is a tool result message (user role with tool_result blocks)
                 if role == "user" and any(block.get("type") == "tool_result" for block in content):
                     # Separate text content and tool_result blocks
