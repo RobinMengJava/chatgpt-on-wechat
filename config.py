@@ -200,6 +200,11 @@ available_setting = {
     "agent_max_context_tokens": 50000,  # Agent模式下最大上下文tokens
     "agent_max_context_turns": 30,  # Agent模式下最大上下文记忆轮次
     "agent_max_steps": 15,  # Agent模式下单次运行最大决策步数
+    # 冠中巴士旧版站点监控。凭证和 webhook 仅配置在本地 config.json 或环境变量中。
+    "gz_old_api_base": "",
+    "gz_old_api_username": "",
+    "gz_old_api_password": "",
+    "gz_station_monitor_wecom_webhook": "",
 }
 
 
@@ -271,12 +276,13 @@ config = Config()
 
 
 def drag_sensitive(config):
+    sensitive_markers = ("key", "secret", "password", "webhook")
     try:
         if isinstance(config, str):
             conf_dict: dict = json.loads(config)
             conf_dict_copy = copy.deepcopy(conf_dict)
             for key in conf_dict_copy:
-                if "key" in key or "secret" in key:
+                if any(marker in key.lower() for marker in sensitive_markers):
                     if isinstance(conf_dict_copy[key], str):
                         conf_dict_copy[key] = conf_dict_copy[key][0:3] + "*" * 5 + conf_dict_copy[key][-3:]
             return json.dumps(conf_dict_copy, indent=4)
@@ -284,7 +290,7 @@ def drag_sensitive(config):
         elif isinstance(config, dict):
             config_copy = copy.deepcopy(config)
             for key in config:
-                if "key" in key or "secret" in key:
+                if any(marker in key.lower() for marker in sensitive_markers):
                     if isinstance(config_copy[key], str):
                         config_copy[key] = config_copy[key][0:3] + "*" * 5 + config_copy[key][-3:]
             return config_copy

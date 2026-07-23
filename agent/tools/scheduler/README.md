@@ -19,7 +19,7 @@ pip install croniter>=2.0.0
 
 ### 1. 创建定时任务
 
-Agent 可以通过自然语言创建定时任务，支持两种类型：
+Agent 可以通过自然语言创建定时任务，支持三种类型：
 
 #### 1.1 静态消息任务
 
@@ -36,9 +36,21 @@ Agent: [调用 scheduler 工具]
       schedule_value: 0 9 * * *
 ```
 
-#### 1.2 动态工具调用任务
+#### 1.2 Agent 动态任务
 
-定时执行工具并发送结果：
+由 Agent 在触发时间理解并执行任务：
+
+```
+action: create
+name: 每日日程
+ai_task: 读取并汇总今日日程
+schedule_type: cron
+schedule_value: 0 8 * * *
+```
+
+#### 1.3 直接工具调用任务
+
+按固定参数直接执行工具，不经过大模型：
 
 **示例对话：**
 ```
@@ -46,11 +58,11 @@ Agent: [调用 scheduler 工具]
 Agent: [调用 scheduler 工具]
       action: create
       name: 每日日程
-      tool_call:
-        tool_name: read
-        tool_params:
-          file_path: ~/cow/schedule.txt
-        result_prefix: 📅 今日日程
+      tool_name: read
+      tool_params:
+        file_path: ~/cow/schedule.txt
+      result_prefix: 📅 今日日程
+      deliver_result: true
       schedule_type: cron
       schedule_value: 0 8 * * *
 ```
@@ -59,6 +71,7 @@ Agent: [调用 scheduler 工具]
 - `tool_name`: 要调用的工具名称（如 `bash`、`read`、`write` 等内置工具）
 - `tool_params`: 工具的参数（字典格式）
 - `result_prefix`: 可选，在结果前添加的前缀文本
+- `deliver_result`: 可选，是否将执行结果发送回创建任务的会话，默认 `true`
 
 **注意：** 如果要使用 skills（如 bocha-search），需要通过 `bash` 工具调用 skill 脚本
 

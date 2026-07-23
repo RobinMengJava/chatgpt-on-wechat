@@ -23,7 +23,8 @@ class SchedulerTool(BaseTool):
         "创建、查询和管理定时任务（提醒、周期性任务等）。\n\n"
         "⚠️ 重要：仅当需要「定时/提醒/每天/每周/X分钟后/X点」等延迟或周期执行时才使用此工具。"
         "使用方法：\n"
-        "- 创建：action='create', name='任务名', message/ai_task='内容', schedule_type='once/interval/cron', schedule_value='...'\n"
+        "- 创建：action='create', name='任务名', message/ai_task/tool_name 三选一, "
+        "schedule_type='once/interval/cron', schedule_value='...'\n"
         "- 查询：action='list' / action='get', task_id='任务ID'\n"
         "- 管理：action='delete/enable/disable', task_id='任务ID'\n\n"
         "调度类型：\n"
@@ -50,11 +51,27 @@ class SchedulerTool(BaseTool):
             },
             "message": {
                 "type": "string",
-                "description": "固定消息内容 (与ai_task二选一)"
+                "description": "固定消息内容 (与 ai_task、tool_name 三选一)"
             },
             "ai_task": {
                 "type": "string",
-                "description": "AI任务描述 (与message二选一)，用于定时让AI执行的任务"
+                "description": "AI任务描述 (与 message、tool_name 三选一)，用于定时让AI执行的任务"
+            },
+            "tool_name": {
+                "type": "string",
+                "description": "直接执行的工具名称 (与 message、ai_task 三选一)"
+            },
+            "tool_params": {
+                "type": "object",
+                "description": "直接工具任务的参数，默认为空对象"
+            },
+            "result_prefix": {
+                "type": "string",
+                "description": "直接工具任务结果的可选消息前缀"
+            },
+            "deliver_result": {
+                "type": "boolean",
+                "description": "直接工具执行后是否把结果发送回任务创建会话，默认 true"
             },
             "schedule_type": {
                 "type": "string",
@@ -130,6 +147,7 @@ class SchedulerTool(BaseTool):
         name = kwargs.get("name")
         message = kwargs.get("message")
         ai_task = kwargs.get("ai_task")
+        tool_name = kwargs.get("tool_name")
         schedule_type = kwargs.get("schedule_type")
         schedule_value = kwargs.get("schedule_value")
         
@@ -137,11 +155,13 @@ class SchedulerTool(BaseTool):
         if not name:
             return "错误: 缺少任务名称 (name)"
         
-        # Check that exactly one of message/ai_task is provided
-        if not message and not ai_task:
-            return "错误: 必须提供 message（固定消息）或 ai_task（AI任务）之一"
-        if message and ai_task:
-            return "错误: message 和 ai_task 只能提供其中一个"
+        # Check that exactly one action type is provided.
+        action_inputs = [message, ai_task, tool_name]
+        if sum(bool(value) for value in action_inputs) != 1:
+            return (
+                "错误: message（固定消息）、ai_task（AI任务）和 "
+                "tool_name（直接工具）必须且只能提供一个"
+            )
         
         if not schedule_type:
             return "错误: 缺少调度类型 (schedule_type)"
@@ -162,7 +182,7 @@ class SchedulerTool(BaseTool):
         # Create task
         task_id = str(uuid.uuid4())[:8]
         
-        # Build action based on message or ai_task
+        # Build action based on message, ai_task or a deterministic tool call.
         if message:
             action = {
                 "type": "send_message",
@@ -172,10 +192,25 @@ class SchedulerTool(BaseTool):
                 "is_group": context.get("isgroup", False),
                 "channel_type": self.config.get("channel_type", "unknown")
             }
-        else:  # ai_task
+        elif ai_task:
             action = {
                 "type": "agent_task",
                 "task_description": ai_task,
+                "receiver": context.get("receiver"),
+                "receiver_name": self._get_receiver_name(context),
+                "is_group": context.get("isgroup", False),
+                "channel_type": self.config.get("channel_type", "unknown")
+            }
+        else:
+            tool_params = kwargs.get("tool_params")
+            if tool_params is not None and not isinstance(tool_params, dict):
+                return "错误: tool_params 必须是对象"
+            action = {
+                "type": "tool_call",
+                "tool_name": tool_name,
+                "tool_params": tool_params or {},
+                "result_prefix": kwargs.get("result_prefix", ""),
+                "deliver_result": kwargs.get("deliver_result", True),
                 "receiver": context.get("receiver"),
                 "receiver_name": self._get_receiver_name(context),
                 "is_group": context.get("isgroup", False),
@@ -216,8 +251,11 @@ class SchedulerTool(BaseTool):
         
         if message:
             content_desc = f"💬 固定消息: {message}"
-        else:
+        elif ai_task:
             content_desc = f"🤖 AI任务: {ai_task}"
+        else:
+            delivery = "发送执行结果" if action["deliver_result"] else "不发送执行结果"
+            content_desc = f"🔧 直接工具: {tool_name}（{delivery}）"
         
         return (
             f"✅ 定时任务创建成功\n\n"
@@ -268,6 +306,12 @@ class SchedulerTool(BaseTool):
         next_run_str = datetime.fromisoformat(next_run).strftime('%Y-%m-%d %H:%M:%S') if next_run else "未知"
         last_run = task.get("last_run_at")
         last_run_str = datetime.fromisoformat(last_run).strftime('%Y-%m-%d %H:%M:%S') if last_run else "从未执行"
+        if action.get("type") == "agent_task":
+            action_desc = f"AI任务: {action.get('task_description')}"
+        elif action.get("type") == "tool_call":
+            action_desc = f"直接工具: {action.get('tool_name') or action.get('call_name')}"
+        else:
+            action_desc = f"消息: {action.get('content')}"
         
         return (
             f"📋 任务详情\n\n"
@@ -276,7 +320,7 @@ class SchedulerTool(BaseTool):
             f"状态: {status}\n"
             f"调度: {schedule_desc}\n"
             f"接收者: {action.get('receiver_name', action.get('receiver'))}\n"
-            f"消息: {action.get('content')}\n"
+            f"{action_desc}\n"
             f"下次执行: {next_run_str}\n"
             f"上次执行: {last_run_str}\n"
             f"创建时间: {datetime.fromisoformat(task['created_at']).strftime('%Y-%m-%d %H:%M:%S')}"

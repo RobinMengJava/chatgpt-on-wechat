@@ -103,6 +103,17 @@ def _import_optional_tools():
     except Exception as e:
         logger.error(f"[Tools] Ticket tools failed to load: {e}")
 
+    # Guan Zhong legacy station monitor (requires requests)
+    try:
+        from agent.tools.gz_station_monitor import GzStationMonitorTool
+        tools['GzStationMonitorTool'] = GzStationMonitorTool
+    except ImportError as e:
+        logger.error(
+            f"[Tools] GzStationMonitorTool not loaded - missing dependency: {e}"
+        )
+    except Exception as e:
+        logger.error(f"[Tools] GzStationMonitorTool failed to load: {e}")
+
     # TikHub social media search tool
     try:
         from agent.tools.social_media.tikhub_tool import TikHubTool
@@ -169,6 +180,7 @@ ReconciliationTool = _optional_tools.get('ReconciliationTool')
 QueryWxOrderTool = _optional_tools.get('QueryWxOrderTool')
 QueryWxRefundTool = _optional_tools.get('QueryWxRefundTool')
 TicketApiTool = _optional_tools.get('TicketApiTool')
+GzStationMonitorTool = _optional_tools.get('GzStationMonitorTool')
 TikHubTool = _optional_tools.get('TikHubTool')
 
 
@@ -223,6 +235,7 @@ __all__ = [
     'QueryWxOrderTool',
     'QueryWxRefundTool',
     'TicketApiTool',
+    'GzStationMonitorTool',
     'TikHubTool',
     # Optional tools (may be None if dependencies not available)
     # 'BrowserTool'

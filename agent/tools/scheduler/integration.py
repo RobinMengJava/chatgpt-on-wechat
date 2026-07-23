@@ -3,6 +3,7 @@ Integration module for scheduler with AgentBridge
 """
 
 import os
+from datetime import datetime
 from typing import Optional
 from config import conf
 from common.log import logger
@@ -38,6 +39,7 @@ def init_scheduler(agent_bridge) -> bool:
         # Create task store
         _task_store = TaskStore(store_path)
         logger.debug(f"[Scheduler] Task store initialized: {store_path}")
+        _ensure_gz_station_monitor_task(_task_store)
         
         # Create execute callback
         def execute_task_callback(task: dict):
@@ -82,6 +84,63 @@ def get_task_store():
 def get_scheduler_service():
     """Get the global scheduler service instance"""
     return _scheduler_service
+
+
+def _ensure_gz_station_monitor_task(task_store, config=None) -> bool:
+    """Register the built-in daily GZ station monitor once configuration exists."""
+    config = conf() if config is None else config
+    required = (
+        "gz_old_api_base",
+        "gz_old_api_username",
+        "gz_old_api_password",
+        "gz_station_monitor_wecom_webhook",
+    )
+    if not all(config.get(key) for key in required):
+        logger.debug(
+            "[Scheduler] GZ station monitor not registered: configuration incomplete"
+        )
+        return False
+
+    for task in task_store.list_tasks():
+        action = task.get("action", {})
+        tool_name = action.get("tool_name") or action.get("call_name")
+        if tool_name == "gz_station_monitor":
+            return False
+    if task_store.get_task("gz-station-monitor") is not None:
+        logger.warning(
+            "[Scheduler] Cannot auto-register GZ station monitor: "
+            "task id gz-station-monitor is already in use"
+        )
+        return False
+
+    from croniter import croniter
+
+    now = datetime.now()
+    expression = "0 9 * * *"
+    task_store.add_task(
+        {
+            "id": "gz-station-monitor",
+            "name": "冠中巴士旧版站点每日监控",
+            "enabled": True,
+            "created_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+            "schedule": {"type": "cron", "expression": expression},
+            "action": {
+                "type": "tool_call",
+                "tool_name": "gz_station_monitor",
+                "tool_params": {},
+                "deliver_result": False,
+                "receiver": None,
+                "receiver_name": "企微告警群",
+                "is_group": True,
+                "channel_type": "unknown",
+            },
+            "run_count": 0,
+            "next_run_at": croniter(expression, now).get_next(datetime).isoformat(),
+        }
+    )
+    logger.info("[Scheduler] Registered daily GZ station monitor at 09:00")
+    return True
 
 
 def _execute_agent_task(task: dict, agent_bridge):
@@ -300,6 +359,7 @@ def _execute_tool_call(task: dict, agent_bridge):
         tool_name = action.get("call_name") or action.get("tool_name")
         tool_params = action.get("call_params") or action.get("tool_params", {})
         result_prefix = action.get("result_prefix", "")
+        deliver_result = action.get("deliver_result", True)
         receiver = action.get("receiver")
         is_group = action.get("is_group", False)
         channel_type = action.get("channel_type", "unknown")
@@ -308,7 +368,7 @@ def _execute_tool_call(task: dict, agent_bridge):
             logger.error(f"[Scheduler] Task {task['id']}: No tool_name specified")
             return
         
-        if not receiver:
+        if deliver_result and not receiver:
             logger.error(f"[Scheduler] Task {task['id']}: No receiver specified")
             return
         
@@ -324,12 +384,22 @@ def _execute_tool_call(task: dict, agent_bridge):
         # Execute tool
         logger.info(f"[Scheduler] Task {task['id']}: Executing tool '{tool_name}' with params {tool_params}")
         result = tool.execute(tool_params)
+        result_status = getattr(result, "status", None)
         
         # Get result content
         if hasattr(result, 'result'):
             content = result.result
         else:
             content = str(result)
+
+        if not deliver_result:
+            logger.info(
+                f"[Scheduler] Task {task['id']} executed tool '{tool_name}' "
+                f"with status={result_status}; result delivery disabled"
+            )
+            return
+
+        content = "" if content is None else str(content)
         
         # Add prefix if specified
         if result_prefix:
